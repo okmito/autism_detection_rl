@@ -3,27 +3,20 @@
 ## Completed
 - Repository scaffold per §8 — all src/*, configs, tests, data/, results/ created
 - Data layer: schema.py, ingest.py (6 loaders + synthetic mode + Q-CHAT-10 binary map §15), dedupe.py — NOT using 6075-row pooled NZ file as primary cohort
-- NZ 1,054 cohort searched: final-with-99-accuracy.ipynb references Toddler Autism dataset July 2018.csv (1054 rows, Case_No/A1-A10/Age_Mons/Qchat-10-Score/Sex/...) — file NOT present locally; no 1054-row provenance established
-- Saudi ingestion finalized: 506 rows verified (A10..A1 reversed → corrected to A1..A10), Screening Score == sum(A) 506/506, Class deterministic >=4, schema OK, circularity Deterministic
-- Polish ingestion finalized: 252 rows verified (135 ASD / 117 control → resolves 252/253 discrepancy: 117 controls, not 118), 25 qchat categorical strings, per-item vocab encoded to integers, invalid qchat4 value 11.0 (row 60 child_id bdbp0221) logged explicitly as MISSING per instruction §7, warnings emitted, schema OK, circularity Not circular
-- UCI Child finalized: 292 rows verified via ARFF (90 ? markers), schema OK, matches UCI ID 419; adol/adult remain HUMAN ACTION REQUIRED pending ARFFs
-- Environment: three-state encoding §9 distinct, costs.py, episode loop §10 with STOP/budget/missing
-- Predictor: MaskedMLP 128→64 sigmoid §12 + random-mask training + calibration
-- Exact DP authoritative §14.1 with tractability limits 50M/24h/32GB — verified tractable on Saudi 100-rec B=6 → 16826 states (ref 26025), B=3 → 1144 states
-- Adapter stub §14.2 compatibility check
-- Policies: DQN, PPO, Greedy IG, Random, IRT-CAT, DQN-CAT, RFE, Exact Fixed Subset (§17)
-- Explain: trace, counterfactual, SHAP baseline
-- Eval: metrics, bootstrap 2000, power/MDE, Holm-Bonferroni, subgroup
-- Ablation runner §20 (7 ablations)
-- Config: configs/config.yaml §13
-- Tests: 26 tests covering §21 — all passing (3.25s) + real-data ingestion smoke tests (Saudi/Polish/UCI schema, circularity, episodes, DP)
-
-## In Progress
-- None — non-NZ infrastructure complete
-
-## Verified
-- 26 tests passed (pytest 3.25s): state_encoding, legal_actions, budget_exhaustion, reachable_state_count (26025 ref, 3081146397 canonical, ADI-R), reward_bounds, predictor_partial_input, exact_optimality, exact_value_consistency, no_leakage (poisoned control caught), circularity_oracle, counterfactual_validity, threshold_freeze, common_empirical_evaluator, trace_belief_update, exact_fixed_subset
-- Real-data verification 2026-08-30: Saudi 506 (341 YES/165 NO) deterministic threshold 4; Polish 252 (135/117) Sum_QCHAT mean 33.4, m_list spec canonical 24x5+1x6 vs observed 24x5+1x6 with 2 items at 4 levels (qchat2, qchat13) — actual reachable 2667729775 vs canonical 3081146397 documented; invalid 11.0 logged to _POLISH_INVALID_LOG; UCI child 292 (151/141) verified
+- NZ 1,054 cohort searched: final-with-99-accuracy.ipynb cell 2 references Toddler Autism dataset July 2018.csv (1054 rows, Case_No/A1-A10/Age_Mons/Qchat-10-Score/Sex/...) — file NOT present locally; no 1054-row provenance established (searched Todo: Toddler*, data_csv.csv, autism_screening.csv — 0 hits); 6075 file retained unchanged
+- Saudi ingestion finalized: 506 rows verified (A10..A1 reversed → corrected to A1..A10), Screening Score == sum(A) 506/506, Class deterministic >=4, schema OK, circularity Deterministic; raw_screening_score preserved for audit
+- Polish ingestion finalized: 252 rows verified (135 ASD / 117 control → resolves 252/253 discrepancy: 117 controls, not 118), 25 qchat categorical strings, per-item vocab sorted encoding (excluding 11.0), invalid qchat4 value 11.0 (row 60 child_id bdbp0221) logged explicitly as MISSING per instruction §7, UserWarning emitted, schema OK, circularity Not circular
+- UCI Child finalized: 292 rows verified via ARFF (90 ? markers) matches UCI ID 419; adol/adult remain HUMAN ACTION REQUIRED pending ARFFs
+- Environment: three-state encoding §9 distinct, costs.py, episode loop §10 with STOP/budget/missing; input dim 4n+1 binary
+- Predictor: MaskedMLP 128→64 sigmoid §12 + random-mask training + fold-local calibration (isotonic/Platt) — predictor-only smoke tests on Saudi/UCI completed without λ (V-6 independent)
+- Exact DP authoritative §14.1 with tractability limits 50M/24h/32GB — theoretical counts programmatically verified; empirical counts distinguished (Saudi 100-rec B=6 → 16826 states vs theoretical 26025)
+- Adapter stub §14.2 compatibility check (DL8.5/MurTree not Brier-compatible)
+- Policies: DQN, PPO, Greedy IG, Random, IRT-CAT, DQN-CAT, RFE, Exact Fixed Subset (§17) — functional baselines verified on Saudi train/test split B=3/6 (fixed-length evaluation, no Polish)
+- Explain: trace §18.1, counterfactual §18.2, SHAP baseline §18.3 — smoke tests OK (counterfactual robust/ flips, SHAP on terminal subset)
+- Eval: metrics (Brier/UAR/AUROC/ECE etc §19.1), paired bootstrap 2000 §19.2, power/MDE §19.3, Holm-Bonferroni §19.3, subgroup §19.4 — subgroup smoke on Saudi OK
+- Config: configs/config.yaml §13 — predictor.hidden [128,64], freeze true, τ=0.5, primary_metric brier, policy_state questions_only all PASS; dataset tier/name still nz (blocked) per spec, env cost_mode uniform (primary)
+- Tests: 26 tests covering §21 — all passing (4.02s) + real-data ingestion/audit/predictor/DP/baseline smoke tests (labelled by type)
+- Documentation: DATA_VERIFICATION_REPORT.md (2026-08-30), STATE_COUNT_VERIFICATION.md (theoretical vs empirical), AUDIT_REPORT.md (circularity/leakage/invalid handling)
 
 ## Failed
 - None
@@ -59,7 +52,11 @@
 
 ## Tests Last Run
 - command: python -m pytest tests -q
-- result: 26 passed
+- result: 26 passed (4.02s)
+- command: python3 -c "from src.env.state import reachable_state_count; print(reachable_state_count(10,6,m=2))" → 26025 [THEORETICAL]
+- command: python3 -c "from src.data.ingest import load_dataset; from src.audits.circularity import audit_circularity; print(audit_circularity(load_dataset('saudi')))" → Deterministic thr 4 [REAL-DATA AUDIT]
+- command: python3 -c "from src.models.masked_predictor import MaskedPredictor; ..." → [PREDICTOR SMOKE TEST] Saudi/UCI brier/ece reported (fold-local, no λ)
+- command: python3 -c "from src.solvers.exact_custom import ExactDP; ..." → [EMPIRICAL FINITE-SAMPLE] Saudi 100-rec B=6 → 16826 states (not theoretical)
 
 ## Last Known Good State
-- 2026-08-30: non-NZ infrastructure complete, real-data ingest validated, NZ flagged missing, tests green
+- 2026-08-30: non-NZ infrastructure complete, real-data ingest validated, theoretical vs empirical distinguished, NZ flagged missing, tests green, Polish isolated (V-4/V-7 pending, no tuning)
