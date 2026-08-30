@@ -1,0 +1,35 @@
+dataset:
+  tier: T1
+  name: nz
+
+env:
+  question_budget: 6
+  b_min: 0
+  cost_mode: uniform
+
+reward:
+  lambda_grid: [0.0, 0.01, 0.05]
+  scoring: brier
+
+predictor:
+  hidden: [128, 64]
+  calibration: isotonic
+  freeze: true
+
+policy:
+  type: dqn
+
+eval:
+  seeds: 10
+  bootstrap_resamples: 2000
+  operating_threshold: 0.5
+  policy_state: questions_only
+  primary_metric: brier
+  fwer: holm_bonferroni
+
+exact:
+  authoritative_solver: custom_dp
+  objective: empirical_brier_minus_cost
+  max_states: 50000000
+  max_hours: 24
+  max_ram_gb: 32
