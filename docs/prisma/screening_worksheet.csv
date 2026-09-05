@@ -1,0 +1,2 @@
+record_id,title,authors,year,venue,doi,database_source,query_id,search_date,screening_stage,decision,exclusion_reason,rationale,notes,contributes_to,novelty_anchor
+P0001,Q-CHAT-10 fixed subset for autism screening,Sollis; Wall; Washington,2025,Scientific Reports 15:39091,10.1038/s41598-025-39091-3,Scholar,Q1,2026-XX-XX,included,include,,Four-item Saudi-trained fixed subset; AUROC 87 ± 11 at τ=0.3,Polish external evaluation 252,Four-item fixed subset; sequential adaptive policy is not the contribution; static baseline reference,S2,true
