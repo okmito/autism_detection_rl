@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adaptive Screening — RL Demo</title>
+<style>
+:root{
+  --bg:#0b1020; --panel:#121a33; --panel2:#0e1529; --line:#23304f;
+  --txt:#e8ecf8; --mut:#93a0c4; --acc:#5b8cff; --acc2:#8a5bff;
+  --good:#2ee6a8; --warn:#ffb454; --bad:#ff5d7a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:radial-gradient(1100px 600px at 85% -10%, #1a2a5e55, transparent),
+             radial-gradient(900px 500px at -10% 110%, #3a1a6e44, transparent), var(--bg);
+  color:var(--txt); font-family:'Segoe UI',system-ui,-apple-system,sans-serif; min-height:100vh;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:28px 20px 60px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:6px}
+.logo{width:42px;height:42px;border-radius:12px;flex:0 0 auto;
+  background:linear-gradient(135deg,var(--acc),var(--acc2));
+  display:flex;align-items:center;justify-content:center;font-size:22px}
+h1{font-size:22px;font-weight:650;letter-spacing:.2px}
+.sub{color:var(--mut);font-size:13px;margin-top:2px}
+.badge{margin-left:auto;font-size:11px;color:var(--warn);border:1px solid #ffb45444;
+  background:#ffb45414;padding:5px 10px;border-radius:999px;white-space:nowrap}
+.grid{display:grid;grid-template-columns:380px 1fr;gap:18px;margin-top:20px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));
+  border:1px solid var(--line);border-radius:16px;padding:20px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:1.4px;color:var(--mut);margin-bottom:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;
+  border:none;border-radius:10px;padding:11px 16px;font-size:14px;font-weight:600;
+  color:#fff;background:linear-gradient(135deg,var(--acc),var(--acc2));transition:.15s}
+.btn:hover{filter:brightness(1.12)}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+.btn.danger{background:linear-gradient(135deg,#ff5d7a,#ff8a5b)}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap}
+.mode{display:flex;gap:8px;margin-bottom:16px}
+.mode button{flex:1;padding:9px;border-radius:9px;border:1px solid var(--line);
+  background:transparent;color:var(--mut);font-size:13px;cursor:pointer}
+.mode button.on{background:#5b8cff1f;border-color:var(--acc);color:var(--txt)}
+.policy{display:flex;gap:8px;margin-bottom:18px}
+.policy button{flex:1;padding:9px;border-radius:9px;border:1px solid var(--line);
+  background:transparent;color:var(--mut);font-size:13px;cursor:pointer}
+.policy button.on{background:#8a5bff1f;border-color:var(--acc2);color:var(--txt)}
+.qcard{background:#0b1226;border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+.qcode{display:inline-block;font-size:11px;font-weight:700;color:var(--acc);
+  border:1px solid #5b8cff55;border-radius:6px;padding:2px 8px;margin-bottom:8px}
+.qtext{font-size:15px;line-height:1.45;margin-bottom:14px}
+.ans{display:flex;gap:10px}
+.ans button{flex:1;padding:12px;border-radius:10px;border:1px solid var(--line);
+  background:#141d3a;color:var(--txt);font-size:14px;cursor:pointer;transition:.15s}
+.ans button:hover{border-color:var(--acc);background:#182449}
+.gauge{position:relative;width:190px;height:190px;margin:6px auto 4px}
+.gauge svg{transform:rotate(-90deg)}
+.gauge .track{stroke:#1e2a4d;fill:none}
+.gauge .bar{stroke:url(#gg);fill:none;stroke-linecap:round;transition:stroke-dashoffset .8s cubic-bezier(.4,0,.2,1)}
+.gval{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.gval .num{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums}
+.gval .lab{font-size:11px;color:var(--mut);letter-spacing:1px;text-transform:uppercase;margin-top:2px}
+.decision{text-align:center;margin:14px 0 4px}
+.decision .d{display:inline-block;font-size:17px;font-weight:700;padding:9px 22px;border-radius:999px}
+.d-ref{background:#ff5d7a22;color:var(--bad);border:1px solid #ff5d7a66}
+.d-nore{background:#2ee6a818;color:var(--good);border:1px solid #2ee6a855}
+.meta{text-align:center;color:var(--mut);font-size:12px;margin-top:10px;line-height:1.7}
+.trace{margin-top:6px}
+.trow{display:grid;grid-template-columns:34px 40px 34px 1fr 1fr;gap:8px;align-items:center;
+  padding:8px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:7px;background:#0b1226;font-size:12.5px}
+.trow .up{color:var(--bad)} .trow .down{color:var(--good)} .trow .flat{color:var(--mut)}
+.trace-head{display:grid;grid-template-columns:34px 40px 34px 1fr 1fr;gap:8px;
+  font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px;
+  padding:0 10px 6px}
+.arrow{color:var(--mut)}
+.cf{margin-top:14px;border-left:3px solid var(--acc2);background:#8a5bff10;
+  border-radius:0 10px 10px 0;padding:12px 14px;font-size:13px;line-height:1.55}
+.cf b{color:var(--acc2)}
+.cf.robust{border-left-color:var(--good);background:#2ee6a80f}
+.cf.robust b{color:var(--good)}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kv .box{background:#0b1226;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kv .k{font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px}
+.kv .v{font-size:17px;font-weight:650;margin-top:3px;font-variant-numeric:tabular-nums}
+.empty{color:var(--mut);font-size:13px;text-align:center;padding:46px 10px;line-height:1.8}
+.spin{width:15px;height:15px;border:2px solid #ffffff44;border-top-color:#fff;border-radius:50%;
+  display:inline-block;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.howto{font-size:12.5px;color:var(--mut);line-height:1.75}
+.howto li{margin-left:16px;margin-top:5px}
+footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-height:1.8}
+.progress{height:6px;background:#1a2544;border-radius:99px;overflow:hidden;margin:12px 0 16px}
+.progress i{display:block;height:100%;width:0;border-radius:99px;
+  background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .5s}
+.hidden{display:none}
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+  background:#2a1636;border:1px solid var(--bad);color:var(--txt);padding:10px 18px;
+  border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:9}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">🧩</div>
+    <div>
+      <h1>Adaptive Autism Screening — RL Question Selection</h1>
+      <div class="sub">Reinforcement-learning policy picks which Q-CHAT-10 questions to ask · budget-constrained · research prototype</div>
+    </div>
+    <div class="badge">⚠ Screening research demo — NOT a diagnosis</div>
+  </header>
+
+  <div class="grid">
+    <!-- LEFT COLUMN -->
+    <div>
+      <div class="card">
+        <h2>Run a screening episode</h2>
+        <div class="mode">
+          <button id="m-int" class="on" onclick="setMode('interactive')">Interactive interview</button>
+          <button id="m-auto" onclick="setMode('auto')">Auto episode</button>
+        </div>
+        <div class="policy">
+          <button id="p-greedy" class="on" onclick="setPolicy('greedy')">Policy: Greedy (deterministic)</button>
+          <button id="p-random" onclick="setPolicy('random')">Policy: Random (new draw each run)</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="startBtn" onclick="start()">▶ Start episode</button>
+          <button class="btn ghost" id="stopBtn" onclick="stopEarly()" disabled>⏹ Stop &amp; predict</button>
+          <button class="btn ghost" id="resetBtn" onclick="reset()" disabled>↺ Reset</button>
+        </div>
+        <div class="progress"><i id="prog"></i></div>          <div class="howto" id="howto">
+            <b>How it works</b>
+            <ul>
+              <li>The policy chooses <b>which question</b> to ask next (max 6 of 10).</li>
+              <li><b>Greedy</b> is deterministic: it always picks the question with the highest
+                  expected information gain — the same answers give the same sequence by design.</li>
+              <li><b>Random</b> draws a fresh random sequence each episode — a baseline for comparison.</li>
+              <li>After each answer the model updates the risk estimate.</li>
+              <li>“Stop &amp; predict” ends early and gives the recommendation.</li>
+              <li>Auto mode replays a full episode from the held-out test set.</li>
+            </ul>
+          </div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <h2>Project status (generated artifacts)</h2>
+        <div class="kv">
+          <div class="box"><div class="k">Dataset</div><div class="v" id="s-data">—</div></div>
+          <div class="box"><div class="k">Label audit</div><div class="v" id="s-audit" style="font-size:13.5px">—</div></div>
+          <div class="box"><div class="k">Terminal test Brier</div><div class="v" id="s-brier">—</div></div>
+          <div class="box"><div class="k">Terminal test AUROC</div><div class="v" id="s-auroc">—</div></div>
+          <div class="box"><div class="k">DP sweep</div><div class="v" id="s-dp">—</div></div>
+          <div class="box"><div class="k">Greedy vs random (B=6)</div><div class="v" id="s-b6" style="font-size:12.5px">—</div></div>
+        </div>
+        <div class="meta" id="s-note"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN -->
+    <div>
+      <div class="card">
+        <h2>Risk estimate &amp; decision</h2>
+        <div id="stage">
+          <div class="empty">No episode running.<br>Choose a mode and press <b>▶ Start episode</b>.</div>
+        </div>
+        <div class="meta" style="margin-top:10px">risk = calibrated P(ASD traits) from the neural
+        predictor given the answers so far · decision = REFER if risk ≥ τ = 0.5 · research prototype, not diagnosis</div>
+      </div>
+
+      <div class="card" style="margin-top:18px" id="traceCard">
+        <h2>Question trace</h2>
+        <div id="trace"><div class="empty" style="padding:22px">Answers appear here as you respond.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Screening / referral-recommendation research prototype · not clinically validated · not a diagnostic tool<br>
+    Datasets: Saudi toddlers n=506 (labels are questionnaire-derived — shown in the audit panel) · threshold τ = 0.5 · budget B = 6
+  </footer>
+</div>
+<div id="toast"></div>
+
+<script>
+let mode='interactive', policy='greedy', sid=null, asked=0, liveTrace=[];
+const BUDGET=6;
+const $=id=>document.getElementById(id);
+
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200);}
+function setMode(m){mode=m;$('m-int').classList.toggle('on',m==='interactive');$('m-auto').classList.toggle('on',m==='auto');}
+function setPolicy(p){policy=p;$('p-greedy').classList.toggle('on',p==='greedy');$('p-random').classList.toggle('on',p==='random');}
+function busy(b,label){const s=$('startBtn');if(b){s.dataset.h=s.innerHTML;s.disabled=true;
+  if(label)s.innerHTML='<span class="spin"></span> '+label;}
+  else{s.disabled=false;s.innerHTML=s.dataset.h||'▶ Start episode';}}
+
+async function api(path, body){
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  const j=await r.json().catch(()=>({error:'bad response'}));
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+
+async function loadMeta(){
+  try{
+    const m=await fetch('/api/meta').then(r=>r.json());
+    const d=m.dataset||{};
+    $('s-data').textContent=(d.n??'—')+' rows';
+    const c=m.circularity||{};
+    $('s-audit').textContent=c.classification?`${c.classification} · score ≥ ${c.threshold}`:'—';
+    const o=m.offline||{};
+    $('s-brier').textContent=o.test_brier!=null?Number(o.test_brier).toFixed(4):'run Step 2';
+    $('s-auroc').textContent=o.test_auroc!=null?Number(o.test_auroc).toFixed(4):'run Step 2';
+    $('s-dp').textContent=o.dp_runs?`${o.dp_runs} runs · ${o.dp_all_optimal?'all optimal':'see CSV'}`:'run Step 2';
+    const b=o.b6;
+    $('s-b6').textContent=b&&b.policy_greedy_brier!=null
+      ?`greedy ${Number(b.policy_greedy_brier).toFixed(3)} · random ${Number(b.policy_random_brier).toFixed(3)}`:'run Step 3';
+    $('s-note').textContent=`train/val/test held-out split · class balance ${d.positive}/${d.negative} · τ=${m.tau} · B=${m.budget}`;
+  }catch(e){/* panel stays at '—' */}
+}
+
+function gaugeHTML(p,dec,extra){
+  const R=80,C=2*Math.PI*R, off=C*(1-p);
+  return `
+  <div class="gauge">
+    <svg width="190" height="190" viewBox="0 0 190 190">
+      <defs><linearGradient id="gg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#5b8cff"/><stop offset="100%" stop-color="#8a5bff"/></linearGradient></defs>
+      <circle class="track" cx="95" cy="95" r="${R}" stroke-width="14"/>
+      <circle class="bar" cx="95" cy="95" r="${R}" stroke-width="14"
+        stroke-dasharray="${C}" stroke-dashoffset="${off}"/>
+    </svg>
+    <div class="gval"><div class="num">${(p*100).toFixed(1)}%</div><div class="lab">risk score</div></div>
+  </div>
+  <div class="decision"><span class="d ${dec==='REFERRAL_RECOMMENDED'?'d-ref':'d-nore'}">${dec.replace(/_/g,' ')}</span></div>
+  <div class="meta">${extra}</div>`;
+}
+
+function questionHTML(q){
+  return `<div class="qcard">
+    <span class="qcode">${q.code}</span>
+    <div class="qtext">${q.text}</div>
+    <div class="ans">
+      <button onclick="answer(0)">0 — Typical / No</button>
+      <button onclick="answer(1)">1 — Atypical / Yes</button>
+    </div>
+  </div>`;
+}
+
+function renderTrace(trace, live){
+  if(!trace||!trace.length){$('trace').innerHTML='<div class="empty" style="padding:22px">Answers appear here as you respond.</div>';return;}
+  let h='<div class="trace-head"><span>#</span><span>Item</span><span>Ans</span><span>Belief before → after</span><span>Change</span></div>';
+  for(const t of trace){
+    const d=t.belief_after-t.belief_before;
+    const cls=Math.abs(d)<0.005?'flat':(d>0?'up':'down');
+    const sym=Math.abs(d)<0.005?'·':(d>0?'▲':'▼');
+    h+=`<div class="trow"><span>${t.step}</span><span>${t.item}</span><span>${t.value}</span>
+      <span>${t.belief_before.toFixed(3)} <span class="arrow">→</span> <b>${t.belief_after.toFixed(3)}</b></span>
+      <span class="${cls}">${sym} ${Math.abs(d).toFixed(3)}</span></div>`;
+  }
+  $('trace').innerHTML=h;
+}
+
+function renderCF(cf){
+  if(!cf) return `<div class="cf robust"><b>Robust decision.</b> Flipping any single answer would <b>not</b> change the recommendation.</div>`;
+  return `<div class="cf"><b>Counterfactual:</b> if the answer to <b>${cf.item}</b> were
+    <b>${cf.flipped_value}</b> instead of <b>${cf.original_value}</b>, the risk would move to
+    <b>${cf.new_p.toFixed(3)}</b> and the decision would flip. (minimal single-answer flip)</div>`;
+}
+
+async function start(){
+  try{
+    busy(true, mode==='auto'?'running episode…':'preparing…');
+    const r=await api('/api/session/start',{mode,policy});
+    sid=r.session_id; asked=0; $('prog').style.width='0%';
+    $('stopBtn').disabled = mode==='auto';
+    $('resetBtn').disabled=false;
+    if(mode==='auto'){
+      const res=r.result;
+      $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
+        `policy: ${r.policy} · asked ${res.asked} of 10 · stop: ${res.stop_reason}<br>true label (held out): ${res.true_label===1?'ASD-positive':'ASD-negative'}`);
+      renderTrace(res.trace);
+      setCF(res.counterfactual);
+      $('prog').style.width=(res.asked/BUDGET*100)+'%';
+    }else{
+      liveTrace=[];
+      $('stage').innerHTML=questionHTML(r.question)+
+        `<div class="meta">current risk (no answers yet): <b>${r.belief.toFixed(3)}</b></div>`;
+      renderTrace(null);
+      setCF(null);
+    }
+  }catch(e){toast('⚠ '+e.message);}
+  finally{busy(false);}
+}
+
+async function answer(v){
+  try{
+    document.querySelectorAll('.ans button').forEach(b=>b.disabled=true);
+    const r=await api('/api/session/answer',{session_id:sid,value:v});
+    if(!r.finished){ asked=r.asked; liveTrace.push(r.trace_step); }
+    $('prog').style.width=((r.finished?r.result.asked:asked)/BUDGET*100)+'%';
+    if(r.finished){
+      const res=r.result;
+      $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
+        `asked ${res.asked} of 10 questions · stop: ${res.stop_reason}`);
+      renderTrace(res.trace);
+      setCF(res.counterfactual);
+      $('stopBtn').disabled=true;
+    }else{
+      $('stage').innerHTML=questionHTML(r.next)+
+        `<div class="meta">last answer ${r.trace_step.item}=${r.trace_step.value} ·
+         risk ${r.belief_before.toFixed(3)} → <b>${r.belief_after.toFixed(3)}</b> · question ${asked}/${BUDGET}</div>`;
+      renderTrace(liveTrace);
+      $('stopBtn').disabled=false;
+    }
+  }catch(e){toast('⚠ '+e.message);}
+  finally{document.querySelectorAll('.ans button').forEach(b=>b.disabled=false);}
+}
+
+async function stopEarly(){
+  try{
+    const r=await api('/api/session/answer',{session_id:sid,stop:true});
+    if(r.finished){
+      const res=r.result;
+      $('prog').style.width=(res.asked/BUDGET*100)+'%';
+      $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
+        `stopped early after ${res.asked} of 10 questions`);
+      renderTrace(res.trace);
+      setCF(res.counterfactual);
+      $('stopBtn').disabled=true;
+    }
+  }catch(e){toast('⚠ '+e.message);}
+}
+
+function setCF(cf){
+  const old=$('traceCard').querySelector('.cf'); if(old) old.remove();
+  if(cf!==null) $('traceCard').insertAdjacentHTML('beforeend',renderCF(cf));
+}
+
+function reset(){
+  sid=null; asked=0; liveTrace=[]; $('prog').style.width='0%';
+  $('stage').innerHTML='<div class="empty">No episode running.<br>Choose a mode and press <b>▶ Start episode</b>.</div>';
+  renderTrace(null); setCF(null);
+  $('stopBtn').disabled=true; $('resetBtn').disabled=true;
+}
+
+loadMeta();
+</script>
+</body>
+</html>

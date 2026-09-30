@@ -64,10 +64,10 @@ External solvers (DL8.5/MurTree/STreeD) are cross-checks only when objective-com
 
 State counts verified: n=10,B=3..6 → 1,161 / 4,521 / 12,585 / 26,025 ; Q-CHAT-25 canonical (24×5 + 1×6) → 3,081,146,397 ; Q-CHAT-25 observed (Polish) → 2,667,729,775. See `STATE_COUNT_VERIFICATION.md`.
 
-DP tractability sweep (Step 2, 2026-09-04): 48 ExactDP runs on Saudi at N ∈ {10..506} × B ∈ {3..6} × λ ∈ {0,0.01}, all `status=optimal`. Largest run: N=506, B=6 → 72,964 states / 10.2 s (well inside the 50M / 24h / 32GB tractability bound). See `STATE_COUNT_VERIFICATION.md` §"Step 2 — 2026-09-04 systematic sweep".
+DP tractability sweep (Step 2, re-run 2026-09-30 on **real data**): 48 ExactDP runs on Saudi at N ∈ {10..506} × B ∈ {3..6} × λ ∈ {0,0.01}, all `status=optimal`. Largest run: N=506, B=6 → 25,023 states / 68,408 evals / 2.2 s (well inside the 50M / 24h / 32GB tractability bound). See `STATE_COUNT_VERIFICATION.md` §"Step 2 — 2026-09-04 systematic sweep".
 
 ## Data — §15
-Real datasets require V-1 human action (place files under `data/raw/`). Loaders support `synthetic=True` for testing.
+Real datasets live under `data/raw/` (gitignored — present locally, never committed). Loaders support `synthetic=True` for testing; Saudi / Polish / UCI Child are present and verified, NZ toddler target is pending V-1.
 Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/Sometimes→1 — preserved raw for audit.
 
 **2026-09-04 update:** Saudi 506, Polish 252, UCI Child 292 are real-data-verified in `src/data/ingest.py`. NZ 1,054-row file **source located** (Kaggle mirror + 5 GitHub mirrors); content validated (1,054 rows, Class Yes/No = 728/326, Qchat-10-Score == sum(A) 1,054/1,054, Age 12-36, circularity Deterministic thr 4); **licence = "Unknown"** is the only remaining V-1 blocker. Full resolution in `V1_NZ_DATASET_RESOLUTION.md`.
@@ -80,7 +80,7 @@ Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/S
 ```
 pytest tests -q   # 43 tests
 ```
-26 original tests (§21 core) + 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`) + 4 Step 3 artifact contract tests (`tests/test_step3_artifacts.py`) + 3 V-2 no-claim rule tests (`tests/test_v2_no_claim_rule.py`). All passing (1.78s on a single CPU thread).
+26 original tests (§21 core) + 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`) + 4 Step 3 artifact contract tests (`tests/test_step3_artifacts.py`) + 3 V-2 no-claim rule tests (`tests/test_v2_no_claim_rule.py`). All passing (54s CPU-only, 2026-09-30; the no-claim test now skips hidden dirs such as `.venv/`).
 
 Covers state encoding, legal actions, budget, state counts, reward bounds, predictor, exact optimality, circularity, leakage, counterfactual, threshold freeze, common evaluator, trace, fixed subset, DP tractability, preliminary report metadata, PRISMA template presence.
 
@@ -96,13 +96,13 @@ Step 3 (`scripts/step3_preliminary_reports.py`) emits Saudi-only preliminary rep
 |---|---|
 | `results/perf_vs_budget_saudi.csv` | 13 rows: B ∈ {1..6} × {greedy, random} + terminal (B=10) reference. Columns: items_asked_mean, brier, uar, auroc, ece |
 | `results/perf_vs_budget_saudi.json` | same numbers + metadata (tag, dataset, source, circularity_status, config, git_sha, terminal reference) |
-| `results/faithfulness_saudi.json` | counterfactual flip rate 0.165, robust 0.835 (B=6, τ=0.5, 127 episodes) + SHAP |attr| mean per A1..A10 |
+| `results/faithfulness_saudi.json` | counterfactual flip rate 0.417, robust 0.583 (B=6, τ=0.5, 127 episodes) + SHAP |attr| mean per A1..A10 (top: A8 > A6 > A2) |
 | `results/subgroup_saudi.json` | UAR/Brier by sex × age_band (B=6, τ=0.5); underpowered cells (< 20) marked per §25 |
-| `results/predictor_saudi_metrics.json` | MaskedMLP[128,64]+isotonic on Saudi 506 (4-fold) — test Brier 0.2421, ECE 0.0324, AUROC 0.6230 |
-| `results/predictor_uci_child_metrics.json` | same on UCI Child 292 — test Brier 0.2523, ECE 0.0651, AUROC 0.4814 |
+| `results/predictor_saudi_metrics.json` | MaskedMLP[128,64]+isotonic on Saudi 506 (4-fold) — test Brier 0.0134, ECE 0.0168, AUROC 0.9877 (real data; high AUROC expected — labels are deterministically circular, §16.1 gate applies) |
+| `results/predictor_uci_child_metrics.json` | same on UCI Child 292 — test Brier 0.0713, ECE 0.0765, AUROC 0.9301 (real data; same circularity caveat) |
 | `results/dp_tractability_sweep.{json,csv}` | 48 ExactDP runs, full metadata per row |
 
-These numbers come from the `synthetic=True` fallback because `data/raw/` is gitignored in this environment; the same scripts produce real-data numbers automatically when the CSVs are placed at the expected paths.
+These numbers are from the **real CSVs** in `data/raw/` (re-run 2026-09-30; every artifact carries `"source": "real"`). The NZ 1,054-row cohort is the exception — it is still missing pending V-1, so any NZ number remains synthetic-fallback and is never reported.
 
 ## Pending verification gates — §24
 V-1, V-2, V-4, V-5, V-6, V-7, V-9, V-10 remain NOT VERIFIED until human-supervised completion.

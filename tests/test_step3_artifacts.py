@@ -44,8 +44,8 @@ def test_perf_json_metadata():
     assert obj["source"] in ("real", "synthetic")
     assert "Deterministic" in obj["circularity_status"] or "Synthetic" in obj["circularity_status"]
     assert obj["lambda"] == 0.0
-    # config hash + git sha
-    assert "configs/config.yaml" in obj["config"]
+    # config hash + git sha (accept both path separators — script runs on Linux and Windows)
+    assert "configs/config.yaml" in str(obj["config"]).replace("\\", "/")
     assert "git_sha" in obj
     # terminal reference present
     assert "terminal_B10_brier" in obj["terminal_reference"]

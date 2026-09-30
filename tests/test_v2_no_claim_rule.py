@@ -96,6 +96,10 @@ def test_no_forbidden_phrases_in_markdown():
     for p in REPO.rglob("*.md"):
         if p in ALLOWLIST:
             continue
+        # Skip hidden directories (e.g. .venv/site-packages) — they are
+        # environment artifacts, not project markdown under the rule.
+        if any(part.startswith(".") for part in p.relative_to(REPO).parts):
+            continue
         # Skip docs/prisma (template files)
         try:
             p.relative_to(REPO / "docs")

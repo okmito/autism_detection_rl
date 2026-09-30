@@ -1,8 +1,8 @@
 # Current Project State
 
-**Last updated:** 2026-09-04
-**Operator request:** "check everything once again and update all the markdown files"
-**Branch state:** Working tree modified (markdown + scripts + tests + docs + results). All 43 tests pass.
+**Last updated:** 2026-09-30
+**Operator request:** "do whatever you feel is right and tell me what's left"
+**Branch state:** Working tree modified (markdown + scripts + tests + docs + results). All 43 tests pass. Step 2/3 re-run on REAL data (raw CSVs confirmed present in `data/raw/`).
 
 ## Completed
 
@@ -26,23 +26,24 @@
 - **NZ toddler target** (1,054): source located 2026-09-04 at `kaggle.com/datasets/mamoonamushtaq/toddler-autism-dataset-july-2018-csv` and 5 GitHub mirrors. Verified: 1,054 rows × 19 cols; Class Yes/No = 728/326 (matches spec §15); `Qchat-10-Score == sum(A)` 1,054/1,054; Age_Mons 12-36 (toddler-only); circularity **Deterministic** at thr 4 (exact_match = 1.0000). No file downloaded by agent. **Licence on Kaggle = "Unknown"** is the only remaining V-1 blocker.
 - **NZ combined** (6,075 pooled): retained unchanged, NOT used for any reported result
 
-### Step 2 — Predictor + DP tractability sweep (2026-09-04)
+### Step 2 — Predictor + DP tractability sweep (2026-09-04, re-run on real data 2026-09-30)
 - `scripts/step2_train_and_sweep.py`:
   - Trains `MaskedMLP[128,64] + isotonic` on Saudi 506 (4-fold stratified: 284 train / 95 val / 127 test) and UCI Child 292 (164 / 55 / 73).
   - Runs 48-cell `ExactDP` tractability sweep on Saudi: N ∈ {10, 25, 50, 100, 250, 506} × B ∈ {3, 4, 5, 6} × λ ∈ {0.00, 0.01}.
-  - **All 48 runs `status=optimal`**, no tractability violation (largest run N=506 B=6 → 72,964 states / 210,884 evals / 10.2 s on a single CPU thread).
-- Predictor test metrics (synthetic-fallback run in this env; same script emits real-data numbers when CSVs are placed):
-  - Saudi: Brier 0.2421, ECE 0.0324, AUROC 0.6230, logloss 0.6757, val_brier 0.2444
-  - UCI Child: Brier 0.2523, ECE 0.0651, AUROC 0.4814, logloss 0.6979, val_brier 0.2491
-- Artifacts: `results/predictor_{saudi,uci_child}_metrics.json`, `results/dp_tractability_sweep.{json,csv}` (48 rows)
+  - **All 48 runs `status=optimal`**, no tractability violation (largest run N=506 B=6 → 25,023 states / 68,408 evals / 2.2 s on a single CPU thread).
+- Predictor test metrics (**real CSVs**, 2026-09-30 run):
+  - Saudi: Brier 0.0134, ECE 0.0168, AUROC 0.9877, logloss 0.1234 (near-ceiling AUROC expected — labels deterministically circular, §16.1 gate applies)
+  - UCI Child: Brier 0.0713, ECE 0.0765, AUROC 0.9301, logloss 0.9562 (same circularity caveat)
+- Artifacts: `results/predictor_{saudi,uci_child}_metrics.json`, `results/dp_tractability_sweep.{json,csv}` (48 rows, all `source=real`)
 - 10 invariant tests in `tests/test_dp_tractability_sweep.py`
+- (Prior 2026-09-04 synthetic-fallback numbers — Saudi Brier 0.2421/AUROC 0.6230; sweep largest 72,964 states — preserved in `AUDIT_UPDATE_2026-09-04.md` as historical record; superseded.)
 
-### Step 3 — Preliminary report artifacts (2026-09-04)
+### Step 3 — Preliminary report artifacts (2026-09-04, re-run on real data 2026-09-30)
 - `scripts/step3_preliminary_reports.py`:
-  - **Performance vs budget** on Saudi test (127 episodes) at B ∈ {1..6}: greedy IG vs random. Terminal (B=10) reference: Brier 0.2391, UAR 0.5616, AUROC 0.6137, ECE 0.0224.
-  - **Faithfulness** at B=6, τ=0.5: counterfactual flip rate 0.165, robust 0.835; SHAP |attr| mean per A1..A10 (top: A7 > A5 > A4).
-  - **Subgroup** by sex × age_band, B=6, τ=0.5; underpowered cells (< 20) marked per §25.
-- All artifacts tagged `"preliminary — V-4 / V-6 / V-7 PENDING; supervisor sign-off required"`.
+  - **Performance vs budget** on Saudi test (127 episodes) at B ∈ {1..6}: greedy IG vs random. Terminal (B=10) reference: Brier 0.0053, UAR 0.9881, AUROC 0.9997, ECE 0.0049 (real data; ceiling reflects label circularity).
+  - **Faithfulness** at B=6, τ=0.5: counterfactual flip rate 0.417, robust 0.583; SHAP |attr| mean per A1..A10 (top: A8 > A6 > A2).
+  - **Subgroup** by sex × age_band, B=6, τ=0.5 (sex_F n=86 UAR 0.935; sex_M n=41 UAR 0.892); underpowered cells (< 20) marked per §25.
+- All artifacts tagged `"preliminary — V-4 / V-6 / V-7 PENDING; supervisor sign-off required"` and carry `source=real`.
 - Polish isolation enforced: nothing in this script touches the Polish cohort.
 - 4 contract tests in `tests/test_step3_artifacts.py`
 
@@ -52,8 +53,14 @@
 - 3 contract tests in `tests/test_v2_no_claim_rule.py` (no-claim rule enforcement, template presence, required sections)
 - No-claim rule forbids `first / only / no prior work / absent from the literature / to our knowledge` (when qualifying novelty) in non-allowlisted markdown
 
-### Test suite (2026-09-04)
-**43 passed (1.78s on a single CPU thread)**
+### Environment rebuild + real-data re-run (2026-09-30)
+- Rebuilt venv (`.venv/`, Python 3.14) with full `requirements.txt` — prior `/tmp/aar` venv was lost with `/tmp`.
+- Found `results/` empty (gitignored; prior artifacts never survived the environment) — regenerated all 8 artifacts from the real CSVs in `data/raw/` (Saudi 506, Polish 252, UCI Child 292 all present locally; only NZ 1,054 missing pending V-1).
+- Every artifact now carries `"source": "real"` (previously `synthetic`). Numbers changed accordingly — see Step 2/3 sections and `STATE_COUNT_VERIFICATION.md`.
+- Fixed `tests/test_v2_no_claim_rule.py` scan scope: it was walking `REPO.rglob("*.md")` and failed once `.venv/site-packages/**/*.md` appeared inside the repo. Now skips hidden directories (environment artifacts are not project markdown; the rule's intent is unchanged).
+
+### Test suite (2026-09-30)
+**43 passed (54s on CPU-only torch)**
 - 26 §21 core tests
 - 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`)
 - 4 Step 3 artifact contracts (`tests/test_step3_artifacts.py`)
@@ -100,7 +107,7 @@
 - **Polish qchat4 11.0** treated as invalid data value → MISSING (NaN + missing_mask True) and logged to `_POLISH_INVALID_LOG`, not silently converted — per instruction item 7.
 - **Polish categorical encoding** uses per-item sorted vocab excluding 11.0; actual m_list recorded vs canonical 3,081,146,397.
 - **Primary state** remains `questions_only`; age/sex excluded from policy state; subgroup via `src/eval/subgroup.py`.
-- **Step 2 / Step 3 use `synthetic=True` fallback in this environment** because `data/raw/` is gitignored. The same scripts produce real-data numbers automatically when the CSVs are placed. Every artifact's `source` field is labelled `real` or `synthetic` accordingly.
+- **Step 2 / Step 3 run on REAL Saudi / UCI Child data as of 2026-09-30** (`source: real` in every artifact). NZ remains synthetic-fallback pending V-1 and is never reported. Prior synthetic-fallback numbers are retained only as historical record in `AUDIT_UPDATE_2026-09-04.md`.
 - **No novelty claim** uses `first / only / no prior work / absent from the literature / to our knowledge` (when qualifying novelty) anywhere under this repo. Enforced by `tests/test_v2_no_claim_rule.py`.
 
 ## Files Changed (2026-09-04 audit update)
@@ -139,9 +146,9 @@
 ## Tests Last Run (2026-09-04)
 
 ```
-$ /tmp/aar/bin/python -m pytest tests -q
+$ .venv/bin/python -m pytest tests -q
 ...........................................                              [100%]
-43 passed in 1.84s
+43 passed in 54.27s
 ```
 
 | Test class | Count | Status |
@@ -154,12 +161,12 @@ $ /tmp/aar/bin/python -m pytest tests -q
 
 End-to-end pipeline:
 ```
-$ /tmp/aar/bin/python scripts/step2_train_and_sweep.py
+$ .venv/bin/python scripts/step2_train_and_sweep.py
 ... 48 DP runs all status=optimal ...
 → results/dp_tractability_sweep.json (n_runs=48)
 → results/dp_tractability_sweep.csv
 
-$ /tmp/aar/bin/python scripts/step3_preliminary_reports.py
+$ .venv/bin/python scripts/step3_preliminary_reports.py
 ... Step 3 artifacts ...
 → results/perf_vs_budget_saudi.csv
 → results/perf_vs_budget_saudi.json
@@ -169,14 +176,15 @@ $ /tmp/aar/bin/python scripts/step3_preliminary_reports.py
 
 Theoretical reference (verified):
 ```
-$ /tmp/aar/bin/python -c "from src.env.state import reachable_state_count; print(reachable_state_count(10,6,m=2))"
+$ .venv/bin/python -c "from src.env.state import reachable_state_count; print(reachable_state_count(10,6,m=2))"
 26025
-$ /tmp/aar/bin/python -c "from src.env.state import reachable_state_count; print(reachable_state_count(25,6,m_list=[5,5,5,6,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5]))"
+$ .venv/bin/python -c "from src.env.state import reachable_state_count; print(reachable_state_count(25,6,m_list=[5,5,5,6,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5]))"
 3081146397
-$ /tmp/aar/bin/python -c "from src.env.state import reachable_state_count; print(reachable_state_count(25,6,m_list=[5,4,5,5,5,5,5,5,5,5,5,5,4,5,5,5,5,5,5,5,5,5,5,5,5]))"
+$ .venv/bin/python -c "from src.env.state import reachable_state_count; print(reachable_state_count(25,6,m_list=[5,4,5,5,5,5,5,5,5,5,5,5,4,5,5,5,5,5,5,5,5,5,5,5,5]))"
 2667729775
 ```
 
 ## Last Known Good State
 - 2026-08-30: non-NZ infrastructure complete, real-data ingest validated, theoretical vs empirical distinguished, NZ flagged missing, tests green, Polish isolated (V-4/V-7 pending, no tuning)
 - 2026-09-04 (audit update): all four plan steps (V-1 source location, Step 2 sweep, Step 3 preliminary reports, V-2 PRISMA template) complete and locked behind contract tests. 43/43 tests pass. Every markdown file updated and cross-referenced. Polish isolation enforced. No novelty claim wording. Licence on the NZ 1,054-row file is the only remaining V-1 blocker.
+- 2026-09-30 (env rebuild + real-data run): venv rebuilt, results/ regenerated from the real Saudi/UCI CSVs (`source: real` everywhere), no-claim test scope fixed to skip hidden dirs, all four living docs updated with real numbers. 43/43 tests pass. The 8 verification gates are unchanged — all remaining substantive work is gated on human/supervisor actions (V-1 licence, V-2 searches, V-4/V-6/V-7 sign-offs, V-5/V-9/V-10 not started).

@@ -24,6 +24,16 @@ class MaskedMLP(nn.Module):
     def forward(self, x):
         return torch.sigmoid(self.net(x)).squeeze(-1)
 
+class PlattWrap:
+    """Module-level so instances are picklable (demo model cache)."""
+    def __init__(self, m):
+        self.m = m
+    def predict(self, x):
+        x = np.clip(np.asarray(x, dtype=float), 1e-6, 1 - 1e-6)
+        z = np.log(x / (1 - x)).reshape(-1, 1)
+        return self.m.predict_proba(z)[:, 1]
+
+
 class MaskedPredictor:
     """Wrapper that handles state encoding, training with random masking, calibration."""
     def __init__(self, n_items: int, hidden: List[int] = [128, 64], calibration: str = "isotonic", device: str = "cpu", m_list=None):
@@ -145,14 +155,17 @@ class MaskedPredictor:
             ir.fit(probs, labels)
             self.calibrator = ir
         elif method == "platt":
+            # Platt scaling on the LOGIT of the network output (Platt 1999):
+            # z = log(p / (1 - p)); fit 1-D logistic regression on z.
+            # Fitting on the raw probability compresses the decision boundary
+            # against p∈{0,1} and yields near-saturated posteriors.
+            probs = np.clip(probs, 1e-6, 1 - 1e-6)
+            logits = np.log(probs / (1 - probs)).reshape(-1, 1)
             lr = LogisticRegression()
-            lr.fit(probs.reshape(-1, 1), labels)
-            # wrap to have predict interface
-            class PlattWrap:
-                def __init__(self, m): self.m = m
-                def predict(self, x):
-                    return self.m.predict_proba(np.array(x).reshape(-1, 1))[:, 1]
+            lr.fit(logits, labels)
             self.calibrator = PlattWrap(lr)
+        elif method == "none":
+            self.calibrator = None
         else:
             raise ValueError(f"Unknown calibration {method}")
         return self

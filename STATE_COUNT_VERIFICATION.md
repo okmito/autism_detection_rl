@@ -52,39 +52,42 @@ return `status=optimal` (no tractability violation). The empirical state count
 is monotonically non-decreasing in B (for fixed N) and in N (for fixed B) — verified
 by `tests/test_dp_tractability_sweep.py` (10 invariants, all passing).
 
-Empirical sweep results (Saudi, **synthetic fallback** in this env because the
-gitignored `data/raw/Q-CHAT Saudi Arabia/...csv` is not present; the same script
-will run on the real CSV when placed at the path in `src/data/ingest.py:SAUDI_CSV`):
+Empirical sweep results (Saudi, **real CSV**, re-run 2026-09-30 after the raw
+datasets were confirmed present at `src/data/ingest.py:SAUDI_CSV`; every row carries
+`source=real` in `results/dp_tractability_sweep.{json,csv}`). Values below are the
+λ=0.00 runs; the λ=0.01 runs have identical state/eval counts:
 
 | N | B=3 | B=4 | B=5 | B=6 |
 |---:|---:|---:|---:|---:|
-| 10 | 1,022 | 2,779 | 5,124 | 7,168 |
-| 25 | 1,409 | 4,581 | 9,516 | 14,170 |
-| 50 | 1,798 | 6,253 | 14,150 | 22,408 |
-| 100 | 2,415 | 8,617 | 20,499 | 34,330 |
-| 250 | 2,957 | 12,045 | 30,829 | 55,235 |
-| 506 | 3,127 | 13,904 | 38,680 | 72,964 |
+| 10 | 514 | 1,381 | 2,625 | 3,805 |
+| 25 | 959 | 2,896 | 5,889 | 8,865 |
+| 50 | 1,016 | 3,268 | 7,043 | 11,081 |
+| 100 | 1,144 | 4,159 | 9,981 | 16,826 |
+| 250 | 1,159 | 4,474 | 11,971 | 22,446 |
+| 506 | 1,161 | 4,519 | 12,501 | 25,023 |
 
 Theoretical complete-record reference: 1,161 (B=3) / 4,521 (B=4) / 12,585 (B=5) /
-26,025 (B=6). The empirical counts exceed the theoretical for large N because
-finite-sample DP state keys include the actual support set — the algorithm
-records a state only if it is reachable from the training distribution, so
-empirical counts can be either below or above the abstract reference depending
-on data structure. The Saudi 506 empirical at B=6 (72,964) > theoretical
-(26,025) reflects that DP state key contains the concrete mask+value+b tuple
-(including the support itself), not just the abstract set of all 2^k * C(n,k)
-binary vectors.
+26,025 (B=6). On real data the empirical counts converge to the theoretical
+complete-record counts as N grows (N=506: 1,161 / 4,519 / 12,501 / 25,023 vs
+1,161 / 4,521 / 12,585 / 26,025): with the full cohort nearly every item pattern is
+observed, so finite-sample counts sit slightly below the abstract bound (a few
+mask/value/support combinations are unreachable from 506 records). Smaller N
+truncates the reachable set further. A prior **synthetic-fallback** run
+(2026-09-04, retained in git history and in `AUDIT_UPDATE_2026-09-04.md`) produced
+larger counts (e.g. N=506 B=6 → 72,964) because the synthetic generator's 5%
+per-item missingness explodes the reachable mask×value space; that table is
+superseded by the real-data sweep above.
 
 The full sweep also reports `n_evals` (Bellman evaluations), `time_sec` (wall clock),
 and `V_star` (Bellman value at the root) per run. The largest run (N=506, B=6) takes
-~10.2 s on a single CPU thread and reports 72,964 states / 210,884 evaluations — well
+~2.2 s on a single CPU thread and reports 25,023 states / 68,408 evaluations — well
 inside the `exact.max_states=50M / 24h / 32GB` tractability bound in
 `configs/config.yaml:exact`.
 
 Verification commands:
 ```
 python3 -c "from src.data.ingest import load_dataset; from src.solvers.exact_custom import ExactDP; recs=load_dataset('saudi'); dp=ExactDP(recs[:100],n_items=10,budget=6,b_min=0,lambda_cost=0.01); print(dp.solve()['n_states'])"
-→ 16826   [EMPIRICAL — old smoke test, retained for reference]
+→ 16826   [EMPIRICAL — now reproduces exactly as the N=100, B=6 cell of the real-data sweep above]
 python3 scripts/step2_train_and_sweep.py
 → results/dp_tractability_sweep.json  (48 runs)
 → results/dp_tractability_sweep.csv   (CSV summary)
