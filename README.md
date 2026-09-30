@@ -4,11 +4,78 @@ System function: **adaptive screening and specialist-referral recommendation. No
 
 Source of truth: `Master-Project-Specification_FINAL.md`
 
-## Quickstart
-```bash
-pip install -r requirements.txt
-pytest tests -q
+## Setup & run
+
+**Prerequisites:** Python 3.10+ (validated on 3.14), pip, git. No GPU needed — everything runs CPU-only.
+
+### 1. Create a virtual environment
+
+**Windows (cmd):**
+```bat
+py -3 -m venv .venv-win
+.venv-win\Scripts\python -m pip install --upgrade pip
+.venv-win\Scripts\python -m pip install -r requirements.txt
 ```
+`pip install torch` is CPU-only on Windows by default — no special index needed. Or activate once per session with `.venv-win\Scripts\activate` and use plain `python` afterwards.
+
+**Linux / WSL / macOS:**
+```bash
+python3 -m venv .venv
+.venv/bin/pip install --upgrade pip
+.venv/bin/pip install -r requirements.txt
+```
+Note: a venv created on Linux (e.g. under WSL) cannot be run from Windows cmd and vice versa — keep them separate (`.venv` vs `.venv-win`; both are gitignored).
+
+### 2. Run the test suite
+```bash
+# Windows:  .venv-win\Scripts\python -m pytest tests -q
+# Linux:    .venv/bin/python -m pytest tests -q
+```
+Expected: **54 passed** in ~2 min on CPU (torch training inside the tests is most of it). Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+
+### 3. Run the pipeline (optional — regenerates `results/`)
+`data/raw/` and `results/` are gitignored. If `results/` is empty, regenerate:
+```bash
+python scripts\step2_train_and_sweep.py        # predictor training + 48-run DP sweep (~1 min)
+python scripts\step3_preliminary_reports.py    # perf-vs-budget, faithfulness, subgroup reports
+```
+Scripts automatically use the real CSVs when present under `data/raw/` (every artifact records `"source": "real"`) and fall back to synthetic data for smoke-testing otherwise.
+
+### 4. Run the live demo
+
+**Browser demo (recommended):**
+```bat
+:: Windows
+.venv-win\Scripts\activate
+python scripts\demo_app.py
+:: open http://127.0.0.1:8000
+```
+First start trains the predictor (~20 s) and caches it to `results/demo_model_saudi_seed0_platt.*`; later starts are instant. Options: `--retrain` (ignore cache), `--port 8080` (auto-scans the next 9 ports if busy). The page shows the data audit, an interactive adaptive interview (greedy vs random policy), the per-answer belief trace, the referral decision with a counterfactual explanation, and the project's generated result artifacts.
+
+**Terminal demo (no browser):**
+```bash
+python scripts/demo_live.py               # 8-step scripted walkthrough (~2 min)
+python scripts/demo_live.py --interview   # + interactive Q&A in the terminal
+```
+
+### 5. Data placement
+Loaders expect (see `src/data/ingest.py`):
+```
+data/raw/Q-CHAT Saudi Arabia/Autism Spectrum Disorder Screening Data for Toddlers in Saudi Arabia Data Set.csv
+data/raw/Q-CHAT Polish/polish_qchat.csv
+data/raw/UCI/Autism-Child-Data.arff
+data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv    # pending V-1 licence
+```
+All preprocessing is in-memory; raw files are never modified or committed.
+
+### Troubleshooting
+| Symptom | Fix |
+|---|---|
+| `ModuleNotFoundError: numpy` | You invoked the system Python — use the venv's python path or activate it |
+| `'py' is not recognized` (cmd) | Use `python -m venv .venv-win` instead |
+| Step-3 tests skip | `results/` artifacts missing — run the Step 2/3 scripts above |
+| Port 8000 busy | `python scripts\demo_app.py --port 8080` |
+| Demo shows extreme risk (0/100%) | Expected for consistent all-typical/all-atypical answers — the label audit panel explains why (deterministic questionnaire labels) |
 
 Synthetic demo (no real data required):
 ```python
@@ -48,8 +115,9 @@ src/eval/metrics.py, bootstrap.py, power.py, fwer.py, subgroup.py
 src/ablation/runner.py
 configs/config.yaml (Hydra)
 scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py
+scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (browser demo)
 docs/prisma/screening_worksheet.csv
-tests/ (43 tests, all passing)
+tests/ (54 tests, all passing)
 ```
 
 ## Key invariants — §9-11
@@ -78,9 +146,11 @@ Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/S
 
 ## Tests — §21
 ```
-pytest tests -q   # 43 tests
+pytest tests -q   # 54 tests
 ```
-26 original tests (§21 core) + 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`) + 4 Step 3 artifact contract tests (`tests/test_step3_artifacts.py`) + 3 V-2 no-claim rule tests (`tests/test_v2_no_claim_rule.py`). All passing (54s CPU-only, 2026-09-30; the no-claim test now skips hidden dirs such as `.venv/`).
+26 original tests (§21 core) + 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`) + 4 Step 3 artifact contract tests (`tests/test_step3_artifacts.py`) + 3 V-2 no-claim rule tests (`tests/test_v2_no_claim_rule.py`) + 11 demo-behaviour audit regressions (`tests/test_demo_behavior_audit.py`). All passing (~105s CPU-only, 2026-09-30; the no-claim test skips hidden dirs such as `.venv/`, and the Step-3 path check accepts both Windows and POSIX separators).
+
+Covers state encoding, legal actions, budget, state counts, reward bounds, predictor, exact optimality, circularity, leakage, counterfactual, threshold freeze, common evaluator, trace, fixed subset, DP tractability, preliminary report metadata, PRISMA template presence, plus: greedy determinism + legality, random-policy variation semantics, belief bounds and continuity (no isotonic step collapse), Platt partial-evidence posteriors staying interior, the documented `p_hat >= tau` decision rule at both env and API layers, API risk continuity, and faithful frontend rendering of the backend risk value.
 
 Covers state encoding, legal actions, budget, state counts, reward bounds, predictor, exact optimality, circularity, leakage, counterfactual, threshold freeze, common evaluator, trace, fixed subset, DP tractability, preliminary report metadata, PRISMA template presence.
 
