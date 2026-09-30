@@ -7,6 +7,13 @@
 ## 1. Audit result
 
 `data/raw/` is gitignored (correct per spec §8) and **not present** in this working tree.
+
+> **Re-checked 2026-10-01:** V-1 remains **unresolved**. The other three datasets were
+> re-fetched and verified on that date (see `DATA_VERIFICATION_REPORT.md`), but the NZ
+> 1,054-row toddler file was **still not obtained** — the Kaggle licence remains "Unknown"
+> and no file was downloaded by the agent. Nothing in the §3–§8 analysis below has changed.
+> Once a licence-clear copy is placed at `data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv`,
+> Step 2/3/5 can be re-run on the real NZ cohort.
 Prior searches in `AGENT_PROGRESS.md` and `DATA_VERIFICATION_REPORT.md` concluded the
 1,054-row file is missing. That conclusion was incomplete — see §2.
 

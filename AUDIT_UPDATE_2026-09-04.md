@@ -1,5 +1,17 @@
 # 2026-09-04 Audit Update — Summary of Changes
 
+> ⚠️ **HISTORICAL SNAPSHOT — SUPERSEDED.** This file records the state as of 2026-09-04
+> and is deliberately left unedited, including its 43-test figures, which were already
+> stale by 2026-09-30 (the 11 demo-behaviour tests landed in commit `56a1e3d`).
+>
+> **Current state: see `AGENT_PROGRESS.md` (79 tests).** Later changes:
+> - 2026-09-30: environment rebuilt, results/ regenerated on real data.
+> - 2026-10-01: environment restored again (repo had lost `data/raw/`, `results/`, `.venv`);
+>   **audit found no RL policy had ever been trained**; DQN + PPO fixed and first trained;
+>   **first matched-budget benchmark completed** (greedy-IG attains the exact optimum, the
+>   learned policies do not). See `diagnosisReady.md`, `RL_TRAINING_REPORT.md`,
+>   `POLICY_BENCHMARK_REPORT.md`.
+
 **Date:** 2026-09-04
 **Operator request:** "check everything once again and update all the markdown files"
 **Mode:** audit-and-consolidate (no source-code changes, no committed raw data, no raw-data transmission)

@@ -192,6 +192,28 @@ Replacements while V-2 is open:
 This rule applies to README, code docstrings, results/, and any markdown under
 `docs/`. The agent is configured to reject such wording on review.
 
+### 2026-10-01 note — practical effect of the rule
+
+The rule is enforced mechanically by `tests/test_v2_no_claim_rule.py`, which scans every
+non-allowlisted markdown file in the repo. Because the trigger is a bare word match
+(`\bonly\b`, `\bfirst\b`), it fires on ordinary exclusivity usage, not just novelty claims.
+When writing new documents, expect to rephrase rather than add to the allowlist:
+
+- `only` → "the single", "solely", or restructure the sentence
+- `first` → "initial", "preliminary", "in this implementation"
+
+Real examples of this from the 2026-10-01 pass, for reference:
+- "the first real training runs" → "initial real training runs"
+- "the only cohort" → "the single cohort"
+- "documentation only" → "documented, not built"
+
+Note the test also skips lines containing audit/policy tokens (`TEST`, `AUDIT`, `PENDING`,
+`SCREENING`, …) and skips fenced code blocks, so some legitimate uses pass automatically.
+This is a blunt instrument by design: it is cheaper to rephrase than to adjudicate whether a
+given usage constitutes a novelty claim.
+
+**The rule remains in force. No novelty claim is permitted until V-2 is completed.**
+
 ## 9. Example row (synthetic, for template validation only)
 
 The CSV in `docs/prisma/screening_worksheet.csv` carries this exact one-row header

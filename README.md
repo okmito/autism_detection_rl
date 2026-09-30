@@ -120,6 +120,8 @@ records = load_dataset("nz", synthetic=True)
 | `AUDIT_UPDATE_2026-09-04.md` | consolidation of the 2026-09-04 audit: re-runs, cross-checks, change log |
 | `Master-Project-Specification_FINAL.md` | source of truth (spec §1-§27) |
 
+**Freshness (updated 2026-10-01).** Living documents — `AGENT_PROGRESS.md`, `README.md`, `AUDIT_REPORT.md`, `DATA_VERIFICATION_REPORT.md`, `STATE_COUNT_VERIFICATION.md`, `diagnosisReady.md`, `RL_TRAINING_REPORT.md`, `POLICY_BENCHMARK_REPORT.md`, `V1_NZ_DATASET_RESOLUTION.md`, `V2_PRISMA_SEARCH_LOG.md` — are all current. `AUDIT_UPDATE_2026-09-04.md` is an intentionally **frozen historical snapshot**; its figures are superseded and it carries a header saying so. Current state is always `AGENT_PROGRESS.md` (79 tests).
+
 ## Repository layout — §8
 ```
 src/data/ingest.py, schema.py, dedupe.py

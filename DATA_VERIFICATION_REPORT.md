@@ -1,4 +1,31 @@
-# Dataset Verification Report — 2026-09-04 (no modification to raw files)
+# Dataset Verification Report — 2026-09-04 (updated 2026-10-01; no modification to raw files)
+
+## ⚠️ 2026-10-01 re-fetch — two files are DERIVED conversions, not originals
+
+The repo had lost `data/raw/` entirely (gitignored), so all three available datasets were
+re-fetched from their canonical sources and re-verified. **All figures below were confirmed
+unchanged.** Two of the three files are conversions:
+
+| Dataset | Source used | File status |
+|---|---|---|
+| **Saudi 506** | `github.com/Sugandaram/Autism-Spectrum-Disorder-Screening-Data-for-Toddlers-in-Saudi-Arabia-Data-Set` | **Original CSV** (506 rows, `A10..A1` column order, Class 341/165) |
+| **UCI Child 292** | `archive.ics.uci.edu/static/public/419/data.csv` | ⚠️ **DERIVED ARFF.** UCI **no longer serves an ARFF for dataset 419** — only CSV. `Autism-Child-Data.arff` was generated from the official CSV: same 292 rows, same 21 columns, `NaN`→`?`. The 90 `?` markers (43 `ethnicity`, 43 `relation`, 4 `age`) match the count documented below. |
+| **Polish 252** | Mendeley Data `tmpkt2mfkg`, `QCHAT_dataset1.sav` (sha256 `7fed516f…` verified against Mendeley's published hash) | ⚠️ **DERIVED CSV from SPSS `.sav`.** The `.sav` is the original; `polish_qchat.csv` was written via pyreadstat. `group`/`sex` were rendered using the file's **own SPSS value labels** (group 1=ASD, 7=control; sex 1=Male, 2=Female), not inferred. |
+| **NZ 1,054** | — | Still **absent**. V-1 licence gate unchanged; no file downloaded by the agent. |
+
+Re-verification results — all match the original 2026-09-04 findings exactly:
+
+| Dataset | Rows | Labels | Confirmed |
+|---|---|---|---|
+| Saudi | 506 | 341 / 165 | ✅ `Screening Score == sum(A)` 506/506; circularity Deterministic at thr 4 |
+| UCI Child | 292 | 141 / 151 | ✅ 90 `?` markers preserved |
+| Polish | 252 | 135 ASD / 117 control | ✅ `label_source=clinical`, Not circular, invalid `qchat4=11.0` at row 60 / `bdbp0221` |
+
+Polish observed state count recomputed from the restored file → **2,667,729,775**, matching
+`STATE_COUNT_VERIFICATION.md`. Note the observed `m_list` is `len(vocabulary)` per item
+(`[5,4,5,…,4,…]` — 4-level items at qchat2 and qchat13), **not** `len(vocabulary) - 1`.
+
+Full provenance also recorded in `AGENT_PROGRESS.md` §Data provenance.
 
 ## NZ
 - **2026-08-30 finding:** file `data/raw/Q-CHAT NZ/Autism_Screening_Data_Combined.csv` (6075 rows, 15 cols) — RETAINED UNCHANGED per instruction; 1,054-row Toddler Autism dataset July 2018.csv not found in repo.

@@ -1,8 +1,12 @@
-# State-Count Verification — Theoretical vs Empirical (2026-09-04)
+# State-Count Verification — Theoretical vs Empirical (2026-09-04; re-verified 2026-10-01)
 
 All counts generated programmatically via `src/env/state.py:reachable_state_count` — not hand-entered.
 The most recent sweep was run on 2026-09-04; the prior 2026-08-30 numbers are preserved in
 the "Prior smoke test" subsection for reference.
+
+> **Updated 2026-10-01.** All counts re-verified after the datasets were re-fetched from scratch
+> (`data/raw/` had been lost — it is gitignored). Every value reproduces; see
+> §"2026-10-01 re-verification". Test count corrected 43 → 79.
 
 ## Theoretical Complete-Instrument Reference (no finite-sample pruning)
 Counts assume complete records (no structural missingness) and homogeneous or specified cardinalities. These are **not** empirical sample counts.
@@ -91,9 +95,42 @@ python3 -c "from src.data.ingest import load_dataset; from src.solvers.exact_cus
 python3 scripts/step2_train_and_sweep.py
 → results/dp_tractability_sweep.json  (48 runs)
 → results/dp_tractability_sweep.csv   (CSV summary)
+python3 scripts/step5_policy_benchmark.py --episodes 400 --budgets 1,2,3,4,5,6
+→ results/step5_policy_benchmark_saudi.{json,csv}
+   (also solves ExactDP per budget; per-B state counts in `exact_dp` log lines)
 python3 -m pytest tests -q
-→ 43 passed
+→ 79 passed
 ```
+
+## 2026-10-01 re-verification
+
+The repo had lost `data/raw/` (gitignored), so all datasets were re-fetched and every count recomputed. Results:
+
+| Count | Expected (this doc) | Recomputed 2026-10-01 | Match |
+|---|---|---|---|
+| `reachable_state_count(10, 3, m=2)` | 1,161 | 1,161 | ✅ |
+| `reachable_state_count(10, 6, m=2)` | 26,025 | 26,025 | ✅ |
+| Q-CHAT-25 canonical (24×5 + 1×6) | 3,081,146,397 | 3,081,146,397 | ✅ |
+| Q-CHAT-25 observed (Polish) | 2,667,729,775 | 2,667,729,775 | ✅ |
+| Saudi DP sweep, 48 cells | all `status=optimal` | all `status=optimal` | ✅ |
+
+**Note on deriving the observed `m_list`:** it is `len(vocabulary)` per item, **not** `len(vocabulary) - 1`. Recomputed from the restored Polish file: `[5,4,5,5,5,5,5,5,5,5,5,5,4,5,5,5,5,5,5,5,5,5,5,5,5]` — 4-level items at qchat2 and qchat13, 5-level elsewhere. Using `n_vocab - 1` yields 692,824,784, which does **not** match this document. Use `n_vocab`.
+
+`n_items=10` state counts are unaffected — they use `m=2` (binary), not `m_list`.
+
+### Step 5 exact-DP runs (new, 2026-10-01)
+`scripts/step5_policy_benchmark.py` solves ExactDP once per budget on the 284-record Saudi train split, providing the V\* reference for the optimality gap:
+
+| B | V\* | n_states |
+|---|---|---|
+| 1 | 0.886826 | 21 |
+| 2 | 0.927780 | 201 |
+| 3 | 0.949005 | 1,160 |
+| 4 | 0.973594 | 4,488 |
+| 5 | 0.997653 | 12,152 |
+| 6 | 1.000000 | 23,216 |
+
+These are `[EMPIRICAL FINITE-SAMPLE]` counts on 284 records, not the theoretical references above.
 
 ## Distinction Rule
 - Label every reported figure as either `[THEORETICAL]` (instrument/budget/m definition) or `[EMPIRICAL FINITE-SAMPLE]` (specific N, λ, solver run).

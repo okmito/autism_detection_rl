@@ -49,7 +49,9 @@ Two of the tests assert on the **loss returned before the optimiser step**, whic
 - **PPO critic receives gradient** — critic parameters must change after `train_step`. Directly tests defect 3.
 - **PPO assigns zero probability to illegal actions** — deterministic and sampled selection never return an illegal action.
 
-**Result: 67 passed** (54 pre-existing + 13 new), no warnings.
+**Result at the time of Part 1: 67 passed** (54 pre-existing + 13 new), no warnings.
+The suite is now **79** (12 Step-5 benchmark tests added later the same day — see
+`POLICY_BENCHMARK_REPORT.md`).
 
 ### A correction made during this work
 While debugging the buffer, I initially "fixed" `end_episode` on the belief that it stored the wrong legal set. That was my error, not a bug in the original logic — the test data was wrong. Reverted; the buffer's indexing was correct. Recorded here because the intermediate commit would otherwise look like an intentional design change.

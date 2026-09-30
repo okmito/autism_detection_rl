@@ -62,6 +62,8 @@ The exact reference is defined over a **binary acquisition representation**, a f
 
 **Validity check (not a hypothesis).** When the learned policy is evaluated against the exact reference using the **same empirical value function**, its empirical value cannot exceed the exact optimum. A reported violation indicates an implementation or evaluation error. This statement applies only to the finite-sample reference problem, not to held-out clinical performance.
 
+> **Implementation status (checked 2026-10-01):** the validity check above was executed as an automated regression test in `tests/test_step5_benchmark.py::test_no_policy_beats_exact_optimum`. Across budgets B∈{1..6} and all four policies (greedy, random, DQN, PPO) on the Saudi train split, **no violations were found** — the exact reference is behaving as specified. Test-count and per-run detail in `POLICY_BENCHMARK_REPORT.md`.
+
 - **H1.** At each pre-declared question-count budget of 3–6 items included in the confirmatory family, the primary adaptive policy will achieve lower held-out Brier loss than the exact best fixed-subset policy on the primary Tier-1 dataset, with both methods evaluated at exactly `B` questions. Results on additional Tier-1 datasets are secondary unless included in the pre-registered comparison family.
 - **H2.** The adaptive-versus-fixed difference in held-out Brier loss observed on questionnaire-derived labels will be smaller when the resulting policies are evaluated on the clinician-established Polish cohort; the transfer gap is reported with uncertainty.
 
