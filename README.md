@@ -31,13 +31,21 @@ Note: a venv created on Linux (e.g. under WSL) cannot be run from Windows cmd an
 # Windows:  .venv-win\Scripts\python -m pytest tests -q
 # Linux:    .venv/bin/python -m pytest tests -q
 ```
-Expected: **54 passed** in ~2 min on CPU (torch training inside the tests is most of it). Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+Expected: **67 passed** on CPU. Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+
+> **Disk-space gotcha (2026-10-01):** a plain `pip install -r requirements.txt` pulls the **CUDA** build of torch (~2 GB of nvidia wheels) and fails with `No space left on device` — `/tmp` is a 3.7 GB tmpfs. Install CPU-only torch instead:
+> ```bash
+> TMPDIR=/path/to/big/disk .venv/bin/pip install \
+>   --extra-index-url https://download.pytorch.org/whl/cpu torch
+> TMPDIR=/path/to/big/disk .venv/bin/pip install -r requirements.txt
+> ```
 
 ### 3. Run the pipeline (optional — regenerates `results/`)
 `data/raw/` and `results/` are gitignored. If `results/` is empty, regenerate:
 ```bash
 python scripts\step2_train_and_sweep.py        # predictor training + 48-run DP sweep (~1 min)
 python scripts\step3_preliminary_reports.py    # perf-vs-budget, faithfulness, subgroup reports
+python scripts\step4_train_policies.py --episodes 400 --budget 6   # DQN + PPO training
 ```
 Scripts automatically use the real CSVs when present under `data/raw/` (every artifact records `"source": "real"`) and fall back to synthetic data for smoke-testing otherwise.
 
@@ -68,6 +76,12 @@ data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv    # pending V-1 licence
 ```
 All preprocessing is in-memory; raw files are never modified or committed.
 
+> ⚠️ **Two of these are derived conversions, not original files** (re-fetched 2026-10-01):
+> - `Autism-Child-Data.arff` — **UCI no longer serves an ARFF for dataset 419**, only `data.csv`. This ARFF was generated from that official CSV (same 292 rows, 21 columns, `NaN`→`?`; the 90 missing markers match the documented count).
+> - `polish_qchat.csv` — generated from the original Mendeley Data `tmpkt2mfkg` SPSS `.sav` (sha256 verified) using the file's own SPSS value labels for `group`/`sex`.
+>
+> Full provenance in `AGENT_PROGRESS.md` §"Data provenance".
+
 ### Troubleshooting
 | Symptom | Fix |
 |---|---|
@@ -93,6 +107,8 @@ records = load_dataset("nz", synthetic=True)
 | Document | Contents |
 |---|---|
 | `README.md` (this file) | quickstart, repo layout, invariants, gate status, reports table |
+| **`diagnosisReady.md`** | **audit + roadmap: what stands between this project and diagnostic use (2026-10-01)** |
+| **`RL_TRAINING_REPORT.md`** | **the RL defects found in never-executed code, fixes, and first real training runs (2026-10-01)** |
 | `AGENT_PROGRESS.md` | canonical project state log; what was done, what failed, what's blocked, what's next |
 | `DATA_VERIFICATION_REPORT.md` | per-dataset verification: rows, columns, circularity, missing, invalid-value handling |
 | `STATE_COUNT_VERIFICATION.md` | theoretical (Q-CHAT-10, Q-CHAT-25) and empirical DP tractability counts |
@@ -109,15 +125,15 @@ src/audits/circularity.py, leakage.py
 src/env/state.py, environment.py, costs.py
 src/solvers/exact_custom.py, exact_adapter.py
 src/models/masked_predictor.py
-src/policies/dqn.py, ppo.py, greedy.py, random_policy.py, irt_cat.py, dqn_cat.py, static_rfe.py, static_fixed.py
+src/policies/dqn.py, ppo.py, greedy.py, random_policy.py, irt_cat.py, dqn_cat.py, static_rfe.py, static_fixed.py, replay.py
 src/explain/trace.py, counterfactual.py, shap_baseline.py
 src/eval/metrics.py, bootstrap.py, power.py, fwer.py, subgroup.py
 src/ablation/runner.py
 configs/config.yaml (Hydra)
-scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py
+scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py
 scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (browser demo)
 docs/prisma/screening_worksheet.csv
-tests/ (54 tests, all passing)
+tests/ (67 tests, all passing)
 ```
 
 ## Key invariants — §9-11
@@ -125,6 +141,8 @@ tests/ (54 tests, all passing)
 - STOP legal only after B_min unless no legal items remain; forced when budget==0.
 - Reward: R = (1 - (p_hat - y)^2) - λ·Σc_j ; primary prediction is Brier-based.
 - Primary threshold τ=0.5 frozen before Polish external cohort is opened.
+- **Legal-action masking:** any value-function bootstrap must be masked to the *next* state's legal actions. Enforced in `DQNPolicy.train_step` (applied before the `argmax`) and in PPO (illegal logits masked to `-inf`). Regression-tested in `tests/test_rl_training.py`.
+- **Transition batch format** is shared: `(s, a, r, s_next, done, legal_next)`, with `s_next=None` and `done=1` for terminal steps. `ReplayBuffer` stores `legal_next` so the mask survives collection.
 
 ## Exact reference — §14
 Authoritative solver is `src/solvers/exact_custom.py` (backward induction DP).
@@ -146,13 +164,18 @@ Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/S
 
 ## Tests — §21
 ```
-pytest tests -q   # 54 tests
+pytest tests -q   # 67 tests
 ```
-26 original tests (§21 core) + 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`) + 4 Step 3 artifact contract tests (`tests/test_step3_artifacts.py`) + 3 V-2 no-claim rule tests (`tests/test_v2_no_claim_rule.py`) + 11 demo-behaviour audit regressions (`tests/test_demo_behavior_audit.py`). All passing (~105s CPU-only, 2026-09-30; the no-claim test skips hidden dirs such as `.venv/`, and the Step-3 path check accepts both Windows and POSIX separators).
+26 original tests (§21 core) + 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`) + 4 Step 3 artifact contract tests (`tests/test_step3_artifacts.py`) + 3 V-2 no-claim rule tests (`tests/test_v2_no_claim_rule.py`) + 11 demo-behaviour audit regressions (`tests/test_demo_behavior_audit.py`) + **13 RL training regressions** (`tests/test_rl_training.py`). All passing (2026-10-01; the no-claim test skips hidden dirs such as `.venv/`, and the Step-3 path check accepts both Windows and POSIX separators).
 
 Covers state encoding, legal actions, budget, state counts, reward bounds, predictor, exact optimality, circularity, leakage, counterfactual, threshold freeze, common evaluator, trace, fixed subset, DP tractability, preliminary report metadata, PRISMA template presence, plus: greedy determinism + legality, random-policy variation semantics, belief bounds and continuity (no isotonic step collapse), Platt partial-evidence posteriors staying interior, the documented `p_hat >= tau` decision rule at both env and API layers, API risk continuity, and faithful frontend rendering of the backend risk value.
 
-Covers state encoding, legal actions, budget, state counts, reward bounds, predictor, exact optimality, circularity, leakage, counterfactual, threshold freeze, common evaluator, trace, fixed subset, DP tractability, preliminary report metadata, PRISMA template presence.
+The 13 RL tests are **regressions for defects that had never been caught** because no training code had ever executed — see `RL_TRAINING_REPORT.md`. Notably: DQN's bootstrap must exclude illegal actions, terminal transitions must contribute no bootstrap, PPO's critic must actually receive a gradient, and illegal actions must get zero probability.
+
+## ⚠️ RL policies — training vs benchmarking
+`scripts/step4_train_policies.py` **trains** DQN and PPO; it does not benchmark them. There is as yet **no evaluation of the trained policies** at matched budgets against Greedy-IG, Random, or the exact DP — the project's central claim (learned vs heuristic vs exactly-solved optimum) remains unevidenced. Adding that benchmark is the next unblocked step; see `diagnosisReady.md` §7 Part 2.
+
+All RL results are trained against **circular questionnaire labels** and are therefore not clinical evidence. See `diagnosisReady.md` §4.
 
 ## Reproducibility
 - configs/config.yaml records budget, lambda_grid, seeds, thresholds.
@@ -171,6 +194,7 @@ Step 3 (`scripts/step3_preliminary_reports.py`) emits Saudi-only preliminary rep
 | `results/predictor_saudi_metrics.json` | MaskedMLP[128,64]+isotonic on Saudi 506 (4-fold) — test Brier 0.0134, ECE 0.0168, AUROC 0.9877 (real data; high AUROC expected — labels are deterministically circular, §16.1 gate applies) |
 | `results/predictor_uci_child_metrics.json` | same on UCI Child 292 — test Brier 0.0713, ECE 0.0765, AUROC 0.9301 (real data; same circularity caveat) |
 | `results/dp_tractability_sweep.{json,csv}` | 48 ExactDP runs, full metadata per row |
+| `results/step4_policy_training_saudi.json` | first real DQN + PPO training run (2026-10-01). **Training only — no benchmark.** Carries an explicit circularity warning |
 
 These numbers are from the **real CSVs** in `data/raw/` (re-run 2026-09-30; every artifact carries `"source": "real"`). The NZ 1,054-row cohort is the exception — it is still missing pending V-1, so any NZ number remains synthetic-fallback and is never reported.
 

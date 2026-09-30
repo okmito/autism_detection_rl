@@ -56,28 +56,59 @@ class DQNPolicy:
         return self.select_action(state, legal, epsilon=0.0)
 
     def train_step(self, batch, gamma: float = 0.99):
-        """batch: list of (s, a, r, s_next, done, legal_next)"""
-        # Simplified Double DQN update; for full training see scripts
+        """One Double-DQN update.
+
+        ``batch`` is a list of ``(s, a, r, s_next, done, legal_next)`` tuples as
+        produced by :class:`src.policies.replay.ReplayBuffer`. ``s_next`` is
+        ``None`` for terminal transitions; ``legal_next`` is ignored then.
+        """
+        if not batch:
+            raise ValueError("train_step requires a non-empty batch")
+
         states = torch.cat([self._encode(b[0]) for b in batch], dim=0)
-        actions_idx = torch.tensor([self.n_items if b[1]==STOP else b[1] for b in batch], dtype=torch.long, device=self.device)
+        actions_idx = torch.tensor(
+            [self.n_items if b[1]==STOP else b[1] for b in batch],
+            dtype=torch.long, device=self.device,
+        )
         rewards = torch.tensor([b[2] for b in batch], dtype=torch.float32, device=self.device)
-        # compute target
+        dones = torch.tensor([float(b[4]) for b in batch], device=self.device)
+
         with torch.no_grad():
-            next_q = self.q(torch.cat([self._encode(b[3]) if b[3] is not None else torch.zeros(1, states.shape[1], device=self.device) for b in batch], dim=0))
-            # mask illegal next actions
-            for i,b in enumerate(batch):
+            # Build the next-state tensor. Terminal rows are zero-filled so all
+            # rows share a shape: an earlier revision used (1, D) for terminal
+            # rows, which made torch.cat raise for any batch containing a
+            # terminal transition -- the common case, since STOP is legal.
+            next_states, legal_next = [], []
+            for b in batch:
                 if b[3] is None:
+                    next_states.append(torch.zeros(1, states.shape[1], device=self.device))
+                    legal_next.append(None)
+                else:
+                    next_states.append(self._encode(b[3]))
+                    legal_next.append(b[5] if len(b) > 5 else None)
+            next_states = torch.cat(next_states, dim=0)
+
+            # Legal-action mask over next states. Illegal actions (already-asked
+            # items, STOP before b_min) must never contribute to the bootstrap
+            # target. An earlier revision built this mask and discarded it, so
+            # the target optimised toward illegal actions -- the one behaviour a
+            # budgeted questionnaire policy must not learn.
+            next_mask = torch.full(
+                (next_states.shape[0], self.n_actions), float("-inf"), device=self.device
+            )
+            for i, legal in enumerate(legal_next):
+                if legal is None:
                     continue
-                legal_next = b[5] if len(b)>5 else []
-                mask = torch.full((self.n_actions,), float("-inf"), device=self.device)
-                # Actually we need to mask; simplified: set illegal to -inf via numpy
-                # skip for brevity — use max over legal only
-            # Double DQN: argmax from online, value from target
-            next_actions = next_q.argmax(dim=1)
-            target_q_vals = self.target(torch.cat([self._encode(b[3]) if b[3] is not None else torch.zeros(1, states.shape[1], device=self.device) for b in batch], dim=0))
-            target_vals = target_q_vals.gather(1, next_actions.unsqueeze(1)).squeeze(1)
-            dones = torch.tensor([float(b[4]) for b in batch], device=self.device)
+                for a in legal:
+                    next_mask[i, self.n_items if a == STOP else a] = 0.0
+            illegal = next_mask == float("-inf")
+
+            # Double DQN: argmax chosen by the online net, value taken from target.
+            next_actions = self.q(next_states).masked_fill(illegal, float("-inf")).argmax(dim=1)
+            target_vals = self.target(next_states).gather(1, next_actions.unsqueeze(1)).squeeze(1)
+            # Terminal rows contribute nothing: done == 1 zeroes the bootstrap.
             y = rewards + gamma * target_vals * (1 - dones)
+
         q_vals = self.q(states).gather(1, actions_idx.unsqueeze(1)).squeeze(1)
         loss = nn.MSELoss()(q_vals, y)
         self.opt.zero_grad(); loss.backward(); self.opt.step()

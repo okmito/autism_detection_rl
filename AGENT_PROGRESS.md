@@ -1,8 +1,32 @@
 # Current Project State
 
-**Last updated:** 2026-09-30
-**Operator request:** "do whatever you feel is right and tell me what's left"
-**Branch state:** Working tree modified (markdown + scripts + tests + docs + results). All 43 tests pass. Step 2/3 re-run on REAL data (raw CSVs confirmed present in `data/raw/`).
+**Last updated:** 2026-10-01
+**Operator request:** "make the project ready for diagnosis" → audit produced `diagnosisReady.md`; Parts 0+1 implemented.
+**Branch state:** working tree modified (new RL code + tests + docs). **67 tests pass** (54 pre-existing + 13 new).
+**READ FIRST:** `diagnosisReady.md` — it records that the RL half of this project had **never been trained** before 2026-10-01, and what clinical readiness would actually require.
+
+## 2026-10-01 — Part 0 (environment) + Part 1 (RL code)
+
+### Part 0 — environment restored ✅
+The repo had **no `.venv`, no `data/raw/`, no `results/`** (all gitignored), so no documented number was reproducible.
+- Rebuilt venv on Python 3.14.7. **Note:** `requirements.txt` resolves `torch` to the CUDA build, which exhausts `/tmp` (3.7G tmpfs). Installed CPU-only torch via `--extra-index-url https://download.pytorch.org/whl/cpu` with `TMPDIR` pointed off the tmpfs. Same disk failure class as 2026-09-30.
+- Restored all three datasets — see "Data provenance" below; **the UCI ARFF and the Polish CSV are derived conversions, not originals**.
+- Re-ran Step 2 + Step 3: all 8 artifacts regenerated with `source: real`. All 48 DP runs `status=optimal`. State counts match `STATE_COUNT_VERIFICATION.md` exactly.
+- Test suite: 40 passed / 14 skipped → after regeneration **54 passed, 0 skipped**.
+
+### Part 1 — RL code fixed and trained ✅
+**Two** real defects in code that had never executed (full detail in `RL_TRAINING_REPORT.md`):
+1. `DQNPolicy.train_step` built a legal-action mask and discarded it → bootstrap optimised toward illegal actions.
+2. `PPOPolicy` had **no training method at all** — the critic never received a gradient.
+
+A third alleged defect (terminal next-state tensor shapes breaking `torch.cat`) was investigated on 2026-10-01 and **retracted** — `torch.cat(dim=0)` concatenates along dim 0, so the original code did not raise. Do not repeat that claim.
+
+Fixed both; added `src/policies/replay.py` (`ReplayBuffer`, stores per-transition legal sets), `scripts/step4_train_policies.py`, and `tests/test_rl_training.py` (13 tests). Aligned PPO's batch format with DQN's.
+
+First real runs (Saudi 506, B=6, seed 0): DQN loss 0.006889 → 0.000235; PPO value loss 0.066314 → 5.9e-05; PPO entropy flat at ~2.11 (no collapse). Artifact: `results/step4_policy_training_saudi.json`.
+
+### Part 2 — policy benchmark ⬜ NOT STARTED
+DQN and PPO are trained but **never evaluated** at matched budgets against Greedy-IG / Random / ExactDP. The project's central claim remains unevidenced. Recommended as a new script `step5_policy_benchmark.py` so existing artifacts stay byte-identical.
 
 ## Completed
 
@@ -18,6 +42,18 @@
 - Eval: metrics §19.1, paired bootstrap 2000 §19.2, power/MDE §19.3, Holm-Bonferroni §19.3, subgroup §19.4
 - Config: `configs/config.yaml` §13 — `predictor.hidden [128,64]`, `freeze true`, `τ=0.5`, `primary_metric brier`, `policy_state questions_only` all PASS
 - 26 §21 tests passing
+
+### Data provenance (2026-10-01) — ⚠️ two files are DERIVED, not originals
+All three CSVs were re-fetched from scratch on 2026-10-01. Any agent re-doing this must know two files are conversions:
+
+| Dataset | Source | Status |
+|---|---|---|
+| **Saudi 506** | `github.com/Sugandaram/Autism-Spectrum-Disorder-Screening-Data-for-Toddlers-in-Saudi-Arabia-Data-Set` (only repo found hosting the file) | **Original CSV.** 506 rows, `A10..A1` order, Class 341/165 — matches §15 |
+| **UCI Child 292** | `archive.ics.uci.edu/static/public/419/data.csv` | ⚠️ **DERIVED.** UCI **no longer serves an ARFF for id 419** — only CSV. `Autism-Child-Data.arff` was generated from the official CSV: same 292 rows, same 21 columns, `NaN`→`?`. Verified: 292 records, 151/141 labels, 90 `?` markers (43 in `ethnicity`, 43 in `relation`, 4 in `age`) — the 90 matches the documented count. **Not the original ARFF file.** |
+| **Polish 252** | Mendeley Data `tmpkt2mfkg` (`QCHAT_dataset1.sav`, sha256 `7fed516f…` verified against Mendeley's published hash) | ⚠️ **DERIVED CSV from SPSS `.sav`.** The `.sav` is the original; `polish_qchat.csv` was generated via pyreadstat. `group`/`sex` written using the file's **own SPSS value labels** (group 1=ASD, 7=control; sex 1=Male, 2=Female), not guessed. Verified: 252 records, 135 ASD / 117 control, `label_source=clinical`, invalid `qchat4=11.0` at row 60 / `bdbp0221` — matches `DATA_VERIFICATION_REPORT.md` exactly. |
+| **NZ 1054** | — | Still **absent**, V-1 blocked (licence "Unknown"). Never downloaded. |
+
+**Verification after restore:** Polish state count recomputed from the restored file → `2,667,729,775`, exactly matching `STATE_COUNT_VERIFICATION.md`. Canonical → `3,081,146,397`. Both confirmed.
 
 ### Data validation (2026-08-30 + 2026-09-04)
 - **Saudi** (506): A10..A1 reversed → remapped to A1..A10, `Screening Score == sum(A)` 506/506, `Class` deterministic `>=4`, `label_source=questionnaire`, circularity **Deterministic**
@@ -59,12 +95,8 @@
 - Every artifact now carries `"source": "real"` (previously `synthetic`). Numbers changed accordingly — see Step 2/3 sections and `STATE_COUNT_VERIFICATION.md`.
 - Fixed `tests/test_v2_no_claim_rule.py` scan scope: it was walking `REPO.rglob("*.md")` and failed once `.venv/site-packages/**/*.md` appeared inside the repo. Now skips hidden directories (environment artifacts are not project markdown; the rule's intent is unchanged).
 
-### Test suite (2026-09-30)
-**43 passed (54s on CPU-only torch)**
-- 26 §21 core tests
-- 10 DP tractability invariants (`tests/test_dp_tractability_sweep.py`)
-- 4 Step 3 artifact contracts (`tests/test_step3_artifacts.py`)
-- 3 V-2 contracts (`tests/test_v2_no_claim_rule.py`)
+### Test suite (superseded — see 2026-10-01)
+The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour tests in `56a1e3d`; 54 was correct then, and 67 is correct now. Breakdown in the 2026-10-01 test table below.
 
 ### Documentation
 - `DATA_VERIFICATION_REPORT.md` (2026-09-04): all 4 datasets, NZ updated with V-1 resolution
@@ -92,6 +124,7 @@
 | V-10 | Tier-3 controlled-access go/no-go | Not started. |
 
 ## Next Required Steps (in priority order)
+0. **Part 2 (NEW — highest value, unblocked):** write `scripts/step5_policy_benchmark.py` to evaluate the now-trained DQN and PPO at matched budgets B ∈ {1..6} plus terminal, on the same Saudi test split and seeds, alongside Greedy-IG, Random, and the exact DP as reference. This is the first run that can actually support RQ1/RQ2. Keep the circularity caveat in-band in every artifact. Polish stays sealed.
 1. **V-1:** Human obtains licence-clear copy of `Toddler Autism dataset July 2018.csv` (or defensible equivalent) and places at `data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv`. Agent then runs `_load_nz_toddler_csv` provenance path (implementation plan in `V1_NZ_DATASET_RESOLUTION.md` §6) and re-runs Step 2/3 on the real NZ cohort.
 2. **V-2:** Human executes the 12 PRISMA queries; agent assists with dedup / inclusion-checks. Update `AGENT_PROGRESS.md` with search date, N_incl_qual, N_novelty.
 3. **V-4:** Freeze MDE / comparison family. After V-4, run cost-utility vs λ figures (currently blocked by V-6).
@@ -109,6 +142,25 @@
 - **Primary state** remains `questions_only`; age/sex excluded from policy state; subgroup via `src/eval/subgroup.py`.
 - **Step 2 / Step 3 run on REAL Saudi / UCI Child data as of 2026-09-30** (`source: real` in every artifact). NZ remains synthetic-fallback pending V-1 and is never reported. Prior synthetic-fallback numbers are retained only as historical record in `AUDIT_UPDATE_2026-09-04.md`.
 - **No novelty claim** uses `first / only / no prior work / absent from the literature / to our knowledge` (when qualifying novelty) anywhere under this repo. Enforced by `tests/test_v2_no_claim_rule.py`.
+
+## Files Changed (2026-10-01)
+
+### New
+- `diagnosisReady.md` — diagnostic-readiness audit + roadmap (read this first)
+- `RL_TRAINING_REPORT.md` — Part 1 defects, fixes, first real training runs
+- `src/policies/replay.py` — `ReplayBuffer` (stores per-transition legal-action sets)
+- `scripts/step4_train_policies.py` — first entry point that trains DQN/PPO
+- `tests/test_rl_training.py` — 13 regression tests, one per defect
+- `results/step4_policy_training_saudi.json` — first real training run (gitignored)
+
+### Modified
+- `src/policies/dqn.py` — `train_step` rewritten: legal mask applied, terminal shapes fixed
+- `src/policies/ppo.py` — **added** `train_step` / `select_action` / `legal_mask`; batch format aligned with DQN
+- `AGENT_PROGRESS.md` — this file
+
+### Derived data files (⚠️ not originals — see Data provenance)
+- `data/raw/UCI/Autism-Child-Data.arff` — generated from UCI's official CSV; UCI no longer serves ARFF for id 419
+- `data/raw/Q-CHAT Polish/polish_qchat.csv` — generated from the original Mendeley `.sav` via pyreadstat
 
 ## Files Changed (2026-09-04 audit update)
 
@@ -143,12 +195,12 @@
 - `configs/config.yaml` — unchanged
 - `requirements.txt` — unchanged
 
-## Tests Last Run (2026-09-04)
+## Tests Last Run (2026-10-01)
 
 ```
 $ .venv/bin/python -m pytest tests -q
-...........................................                              [100%]
-43 passed in 54.27s
+...................................................................      [100%]
+67 passed in 3.12s
 ```
 
 | Test class | Count | Status |
@@ -157,7 +209,15 @@ $ .venv/bin/python -m pytest tests -q
 | DP tractability sweep invariants | 10 | PASS |
 | Step 3 artifact contracts | 4 | PASS |
 | V-2 no-claim rule + PRISMA template | 3 | PASS |
-| **Total** | **43** | **PASS** |
+| Demo behaviour audit regressions | 11 | PASS |
+| **RL training regressions** (`tests/test_rl_training.py`) | **13** | **PASS (new 2026-10-01)** |
+| **Total** | **67** | **PASS** |
+
+**Correction to the record:** this file previously said "43 tests" and a "working tree modified" state; the 43 figure predated the 11 demo-behaviour tests added in commit `56a1e3d`. README's "54" was the correct pre-2026-10-01 count. The 13 RL tests bring it to 67.
+
+| Test class | Count | Status |
+|---|---:|---|
+| (see the 2026-10-01 test table above — 67 total) | 67 | PASS |
 
 End-to-end pipeline:
 ```
@@ -187,4 +247,5 @@ $ .venv/bin/python -c "from src.env.state import reachable_state_count; print(re
 ## Last Known Good State
 - 2026-08-30: non-NZ infrastructure complete, real-data ingest validated, theoretical vs empirical distinguished, NZ flagged missing, tests green, Polish isolated (V-4/V-7 pending, no tuning)
 - 2026-09-04 (audit update): all four plan steps (V-1 source location, Step 2 sweep, Step 3 preliminary reports, V-2 PRISMA template) complete and locked behind contract tests. 43/43 tests pass. Every markdown file updated and cross-referenced. Polish isolation enforced. No novelty claim wording. Licence on the NZ 1,054-row file is the only remaining V-1 blocker.
-- 2026-09-30 (env rebuild + real-data run): venv rebuilt, results/ regenerated from the real Saudi/UCI CSVs (`source: real` everywhere), no-claim test scope fixed to skip hidden dirs, all four living docs updated with real numbers. 43/43 tests pass. The 8 verification gates are unchanged — all remaining substantive work is gated on human/supervisor actions (V-1 licence, V-2 searches, V-4/V-6/V-7 sign-offs, V-5/V-9/V-10 not started).
+- 2026-09-30 (env rebuild + real-data run): venv rebuilt, results/ regenerated from the real Saudi/UCI CSVs (`source: real` everywhere), no-claim test scope fixed to skip hidden dirs, all four living docs updated with real numbers. 43/43 tests pass (superseded count — see 2026-10-01). The 8 verification gates are unchanged — all remaining substantive work is gated on human/supervisor actions (V-1 licence, V-2 searches, V-4/V-6/V-7 sign-offs, V-5/V-9/V-10 not started).
+- 2026-10-01 (audit + Parts 0+1): repo audit found **no RL policy had ever been trained** — `DQNPolicy.train_step` was never called and discarded its legal-action mask (bootstrap optimised toward illegal actions); `PPOPolicy` had no training method at all. Both fixed, replay buffer + training script added, 13 regression tests written. A third alleged defect (terminal next-state shapes breaking `torch.cat`) was investigated and **retracted** — `torch.cat(dim=0)` concatenates along dim 0, so the original code did not raise; do not repeat that claim. Environment rebuilt (CPU-only torch; `/tmp` tmpfs is too small for the CUDA build) and all three datasets restored — two of them as documented conversions. Step 2/3 re-run, 8 artifacts `source: real`, **67/67 tests pass**. `diagnosisReady.md` and `RL_TRAINING_REPORT.md` added. **Part 2 (benchmarking the trained policies) is the next unblocked step**; Polish remains sealed; the 8 verification gates are unchanged.
