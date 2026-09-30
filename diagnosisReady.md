@@ -128,7 +128,9 @@ Parts 0 and 1 of the §7 plan were implemented on 2026-10-01. See `RL_TRAINING_R
 
 **Part 1 — RL code fixed and training infrastructure built.** The two genuine defects in §3.1 corrected, a replay buffer added, and `scripts/step4_train_policies.py` written to actually train DQN and PPO. (A third alleged defect was investigated and retracted — §3.1.)
 
-**Part 2 (policy benchmark) is NOT done.** DQN and PPO have been trained but have **not** been evaluated at matched budgets against Greedy-IG, Random and the exact DP. The RL claim remains unevidenced until that runs.
+**Part 2 (policy benchmark) — DONE 2026-10-01.** `scripts/step5_policy_benchmark.py` measures learned vs heuristic vs exact optimum at matched budgets. **Result: greedy-IG attains the exact optimum (gap ≤ 0.013); DQN and PPO do not, and PPO is worse than random at B=5/6.** Full analysis in `POLICY_BENCHMARK_REPORT.md`. So RQ1/RQ2 now have a first measurement — and it is a negative result for RL on this task.
+
+**Part 3 (docs) — DONE 2026-10-01.** Baseline doc drift corrected (test counts, demo work, layout, reports table) and the RL/benchmark sections added to `README.md`.
 
 ---
 
@@ -150,18 +152,20 @@ Parts 0 and 1 of the §7 plan were implemented on 2026-10-01. See `RL_TRAINING_R
 - Tests for each: DQN illegal-mask correctness, terminal-target no-bootstrap, PPO critic gradient, replay-buffer stitching
 - **Done 2026-10-01.**
 
-### Part 2 — Put the trained policies in the benchmark ⬜ not started
-Extend the Step-3 comparison to include DQN, PPO and `ExactDP` at matched budget (B ∈ {1..6} plus terminal) on the same Saudi test split and seeds.
+### Part 2 — Put the trained policies in the benchmark ✅ done 2026-10-01
+`scripts/step5_policy_benchmark.py` evaluates DQN, PPO, Greedy-IG, Random and ExactDP at matched budgets B ∈ {1..6} on the same held-out test split with the same `run_episode` evaluator, and reports the V\*−V_emp optimality gap.
 
-Recommended as a **new script** (`step5_policy_benchmark.py`) rather than an edit to `step3_preliminary_reports.py`, so existing artifacts stay byte-identical and the baseline remains comparable across the doc history.
+**Result:** greedy-IG attains the exact optimum; neither learned policy does. See `POLICY_BENCHMARK_REPORT.md`.
 
-**Mandatory caveat, to be carried in-band in every artifact:** DQN and PPO will be trained and evaluated against circular questionnaire labels. A policy can learn the circularity perfectly and learn nothing about autism. Part 2 produces the methodological result the spec asks for — learned vs heuristic vs exact-optimum at matched budget — and does **not** produce clinical evidence.
+Implemented as a new script rather than an edit to `step3_preliminary_reports.py`, so existing artifacts stay byte-identical and the baseline remains comparable across the doc history.
 
-### Part 3 — Reconcile the documentation ⬜ partially done
-- `AGENT_PROGRESS.md`: 43 → 54 tests; add demo work from `56a1e3d`; correct "working tree modified"; record Part 1
-- `README.md`: remove duplicated "Covers …" paragraph; add RL artifacts to the reports table
-- `RL_TRAINING_REPORT.md`: Part 1 defects, Part 2 results when available, explicit circularity caveat
-- **Status: RL-specific docs written. Baseline doc drift (§3, §7 test counts and demo work) still outstanding.**
+**Mandatory caveat, carried in-band in every artifact:** DQN and PPO were trained and evaluated against circular questionnaire labels. A policy can learn the circularity perfectly and learn nothing about autism. Part 2 produces the methodological result the spec asks for — learned vs heuristic vs exact-optimum at matched budget — and does **not** produce clinical evidence.
+
+### Part 3 — Reconcile the documentation ✅ done 2026-10-01
+- `AGENT_PROGRESS.md`: test count corrected 43 → 54 → 67 → 79; demo work from `56a1e3d` recorded; stale "working tree modified" state replaced with git-based status; Part 1 + Part 2 sections added; next-steps re-prioritised
+- `README.md`: duplicated "Covers …" paragraph removed; test counts updated; new RL/benchmark sections, layout entries, reports table rows, and the legal-action-masking invariant added
+- `RL_TRAINING_REPORT.md`, `POLICY_BENCHMARK_REPORT.md`: created
+- All baseline drift resolved.
 
 ### Part 4 — Clinical readiness gap analysis ⬜ documented, not built
 Documented here, not built. In rough dependency order:
@@ -186,15 +190,16 @@ Documented here, not built. In rough dependency order:
 
 **Do not pursue diagnostic readiness as the next milestone.** The repo has 6 commits, all from a single agent, no CI configuration, documentation that drifts from reality, and an RL half that has never executed. Building clinical claims on that foundation would put the credibility of the eventual result at risk regardless of how much clinical effort followed.
 
-**Clear the cheap internal dependencies first:** no — begin with the cheap internal dependencies. Parts 0–2 make the project's actual premise testable and are a matter of weeks. **Start the long-lead external dependencies in parallel** — IRB and a clinical partner have multi-year lead times and cost nothing to begin while the engineering proceeds.
+**Clear the cheap internal dependencies before pursuing the long-lead external ones.** Parts 0–2 are complete. They make the project's premise testable and produced its first RL measurement — a negative one, honestly reported. **Start the long-lead external dependencies in parallel:** IRB and a clinical partner have multi-year lead times and cost nothing to begin while the engineering proceeds.
 
-The honest summary: Part 2 will finally answer the question the whole project was designed around, and it will do so on contaminated labels. That answer is worth having. A diagnostic claim would need §7 Part 4, and no amount of Part 1 code substitutes for it.
+The honest summary: Part 2 answered the question the whole project was designed around, and the answer was "greedy-IG is already optimal here, and RL did not beat it" — measured on contaminated labels, at a single seed, with λ=0. That is worth having, and it reframes what clinical work would need to beat. A diagnostic claim would need §7 Part 4, and no amount of Part 1 code substitutes for it.
 
 ---
 
 ## 9. Open decisions for the project owner
 
-1. **Do Parts 2 and 3 next?** Recommended order: Part 2 (benchmark the now-trained policies), then Part 3 (doc reconciliation).
-2. **Keep Polish sealed?** Recommended: yes. It is the single clean transfer evaluation and destroying it for training would be irreversible.
-3. **Start the IRB conversation now?** Longest lead time of any remaining item. Costs nothing to initiate.
+1. **Do Parts 2 and 3 next?** ✅ Both done 2026-10-01.
+2. **Keep Polish sealed?** Recommended: yes. It is the single clean transfer evaluation and destroying it for training would be irreversible. Unchanged.
+3. **Start the IRB conversation now?** Longest lead time of any remaining item. Costs nothing to initiate. Recommended regardless of the RL outcome.
 4. **Is diagnostic use actually the goal?** If yes, §1 above changes the project's stated purpose and the spec needs revising before — not after — clinical work begins.
+5. **Should RL be pursued further at all?** The Step-5 result says greedy-IG is already optimal on this task. The higher-value next steps are multi-seed variance and resolving V-6 (λ), not more RL tuning. See `POLICY_BENCHMARK_REPORT.md` §7.

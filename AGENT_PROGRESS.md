@@ -1,9 +1,30 @@
 # Current Project State
 
-**Last updated:** 2026-10-01
-**Operator request:** "make the project ready for diagnosis" → audit produced `diagnosisReady.md`; Parts 0+1 implemented.
-**Branch state:** working tree modified (new RL code + tests + docs). **67 tests pass** (54 pre-existing + 13 new).
-**READ FIRST:** `diagnosisReady.md` — it records that the RL half of this project had **never been trained** before 2026-10-01, and what clinical readiness would actually require.
+**Last updated:** 2026-10-01 (Parts 0+1+2+3 complete)
+**Operator request:** "make the project ready for diagnosis" → audit produced `diagnosisReady.md`; Parts 0–3 implemented.
+**Branch state:** see git log. **79 tests pass** (54 pre-existing + 13 RL + 12 Step-5 benchmark).
+**READ FIRST, in this order:**
+1. `diagnosisReady.md` — the audit: the RL half had **never been trained** before 2026-10-01, and what clinical readiness would actually require.
+2. `POLICY_BENCHMARK_REPORT.md` — **the headline result**: greedy-IG attains the exact optimum; both learned policies do not.
+
+## 2026-10-01 — Part 2: policy benchmark ✅ (first real RL measurement)
+
+`scripts/step5_policy_benchmark.py` evaluates DQN, PPO, Greedy-IG, Random, and ExactDP at matched budgets B ∈ {1..6} on the same held-out test split, same predictor, same `run_episode` evaluator. Artifact: `results/step5_policy_benchmark_saudi.{json,csv}`. Tests: `tests/test_step5_benchmark.py` (12).
+
+**Optimality gap V\* − V_emp (train split, λ=0, lower is better):**
+
+| B | greedy | dqn | ppo | random |
+|---|---|---|---|---|
+| 1 | −0.000000 | +0.044531 | +0.040883 | +0.055131 |
+| 3 | +0.001595 | +0.032676 | +0.035361 | +0.060355 |
+| 5 | +0.012969 | +0.048338 | +0.105890 | +0.090981 |
+| 6 | +0.006749 | +0.038949 | **+0.138141** | +0.090097 |
+
+**This is a negative result for RL on this task, and it is the honest one.** Training worked (DQN loss 0.0068→0.0002, PPO value loss 0.066→6e-5) but the policies converge to something worse than a one-step lookahead heuristic. PPO degrades monotonically with budget and is worse than random at B=5/B=6.
+
+Behavioural notes: DQN **never stops early** (asks exactly B every time — no adaptive stopping under λ=0); PPO stops very early (1.84 items at B=6), which likely explains its worsening gap. At B=3 greedy and exact produce **identical** test metrics, reproducing the §17 #7 near-optimality claim.
+
+Caveats: single seed (no variance), λ=0 only (V-6 pending), and **all labels are circular** — these numbers measure fit to the questionnaire's own scoring rule, not autism. Full analysis in `POLICY_BENCHMARK_REPORT.md`.
 
 ## 2026-10-01 — Part 0 (environment) + Part 1 (RL code)
 
@@ -25,8 +46,10 @@ Fixed both; added `src/policies/replay.py` (`ReplayBuffer`, stores per-transitio
 
 First real runs (Saudi 506, B=6, seed 0): DQN loss 0.006889 → 0.000235; PPO value loss 0.066314 → 5.9e-05; PPO entropy flat at ~2.11 (no collapse). Artifact: `results/step4_policy_training_saudi.json`.
 
-### Part 2 — policy benchmark ⬜ NOT STARTED
-DQN and PPO are trained but **never evaluated** at matched budgets against Greedy-IG / Random / ExactDP. The project's central claim remains unevidenced. Recommended as a new script `step5_policy_benchmark.py` so existing artifacts stay byte-identical.
+### Part 2 — policy benchmark ✅ DONE 2026-10-01
+DQN, PPO, Greedy-IG, Random and ExactDP are now evaluated at matched budgets B ∈ {1..6} on the same held-out test split with the same evaluator. See the Part 2 section at the top of this file and `POLICY_BENCHMARK_REPORT.md`.
+
+**Finding: greedy-IG attains the exact optimum (gap ≤ 0.013); both learned policies do not, and PPO is worse than random at B=5/6.** Next: multi-seed variance, then resolve V-6 (λ) before any λ-dependent claim.
 
 ## Completed
 
@@ -42,6 +65,9 @@ DQN and PPO are trained but **never evaluated** at matched budgets against Greed
 - Eval: metrics §19.1, paired bootstrap 2000 §19.2, power/MDE §19.3, Holm-Bonferroni §19.3, subgroup §19.4
 - Config: `configs/config.yaml` §13 — `predictor.hidden [128,64]`, `freeze true`, `τ=0.5`, `primary_metric brier`, `policy_state questions_only` all PASS
 - 26 §21 tests passing
+
+### ⚠️ Superseded note (2026-10-01)
+The "Policies: DQN, PPO, …" line above records the **scaffold** only. Through 2026-09-30 those policy classes existed but **had never been trained or evaluated** — no training call existed anywhere in the repo, and every run used Greedy-IG or Random despite `configs/config.yaml` declaring `policy.type: dqn`. Both were fixed and both were first trained/benchmarked on 2026-10-01. See `RL_TRAINING_REPORT.md` and `POLICY_BENCHMARK_REPORT.md`.
 
 ### Data provenance (2026-10-01) — ⚠️ two files are DERIVED, not originals
 All three CSVs were re-fetched from scratch on 2026-10-01. Any agent re-doing this must know two files are conversions:
@@ -124,8 +150,11 @@ The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour t
 | V-10 | Tier-3 controlled-access go/no-go | Not started. |
 
 ## Next Required Steps (in priority order)
-0. **Part 2 (NEW — highest value, unblocked):** write `scripts/step5_policy_benchmark.py` to evaluate the now-trained DQN and PPO at matched budgets B ∈ {1..6} plus terminal, on the same Saudi test split and seeds, alongside Greedy-IG, Random, and the exact DP as reference. This is the first run that can actually support RQ1/RQ2. Keep the circularity caveat in-band in every artifact. Polish stays sealed.
-1. **V-1:** Human obtains licence-clear copy of `Toddler Autism dataset July 2018.csv` (or defensible equivalent) and places at `data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv`. Agent then runs `_load_nz_toddler_csv` provenance path (implementation plan in `V1_NZ_DATASET_RESOLUTION.md` §6) and re-runs Step 2/3 on the real NZ cohort.
+0. ~~Part 2 (benchmark the trained policies)~~ ✅ **DONE 2026-10-01** — see top of file.
+1. **Multi-seed variance (NEW — now the top methodological gap).** The Step-5 gaps come from a single seed. Run `config.eval.seeds = 10` seeds and report mean ± spread; the current DQN/PPO-vs-greedy differences are not interpretable without it. Add `--seeds` to `scripts/step5_policy_benchmark.py`.
+2. **V-6 (λ grid sign-off).** Every current number is λ=0, so cost is unpriced and adaptive stopping is unexcused — which is exactly the regime where a sequential policy could beat greedy. Resolving λ is the highest-value change to the experiment.
+3. **Diagnose PPO's early stopping** (1.84 items at B=6). Likely exploration/credit-assignment; isolate before further tuning.
+4. **V-1:** Human obtains licence-clear copy of `Toddler Autism dataset July 2018.csv` (or defensible equivalent) and places at `data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv`. Agent then runs the `_load_nz_toddler_csv` provenance path (plan in `V1_NZ_DATASET_RESOLUTION.md` §6) and re-runs Step 2/3 on the real NZ cohort.
 2. **V-2:** Human executes the 12 PRISMA queries; agent assists with dedup / inclusion-checks. Update `AGENT_PROGRESS.md` with search date, N_incl_qual, N_novelty.
 3. **V-4:** Freeze MDE / comparison family. After V-4, run cost-utility vs λ figures (currently blocked by V-6).
 4. **V-6:** Sign off on λ grid. After V-6, regenerate Step 2 sweep with the approved λ values.
@@ -148,15 +177,20 @@ The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour t
 ### New
 - `diagnosisReady.md` — diagnostic-readiness audit + roadmap (read this first)
 - `RL_TRAINING_REPORT.md` — Part 1 defects, fixes, first real training runs
+- `POLICY_BENCHMARK_REPORT.md` — **Part 2 results: greedy attains the exact optimum, RL does not**
 - `src/policies/replay.py` — `ReplayBuffer` (stores per-transition legal-action sets)
 - `scripts/step4_train_policies.py` — first entry point that trains DQN/PPO
-- `tests/test_rl_training.py` — 13 regression tests, one per defect
+- `scripts/step5_policy_benchmark.py` — matched-budget benchmark incl. ExactDP reference + optimality gap
+- `tests/test_rl_training.py` — 13 regression tests for the RL defects
+- `tests/test_step5_benchmark.py` — 12 benchmark contract tests
 - `results/step4_policy_training_saudi.json` — first real training run (gitignored)
+- `results/step5_policy_benchmark_saudi.{json,csv}` — first real benchmark (gitignored)
 
 ### Modified
-- `src/policies/dqn.py` — `train_step` rewritten: legal mask applied, terminal shapes fixed
+- `src/policies/dqn.py` — `train_step` rewritten: legal mask applied, duplicate `torch.cat` collapsed
 - `src/policies/ppo.py` — **added** `train_step` / `select_action` / `legal_mask`; batch format aligned with DQN
 - `AGENT_PROGRESS.md` — this file
+- `README.md` — test counts, RL section, layout, reports table, invariants
 
 ### Derived data files (⚠️ not originals — see Data provenance)
 - `data/raw/UCI/Autism-Child-Data.arff` — generated from UCI's official CSV; UCI no longer serves ARFF for id 419
@@ -199,8 +233,9 @@ The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour t
 
 ```
 $ .venv/bin/python -m pytest tests -q
-...................................................................      [100%]
-67 passed in 3.12s
+........................................................................ [ 91%]
+.......                                                                  [100%]
+79 passed in 3.29s
 ```
 
 | Test class | Count | Status |
@@ -210,10 +245,11 @@ $ .venv/bin/python -m pytest tests -q
 | Step 3 artifact contracts | 4 | PASS |
 | V-2 no-claim rule + PRISMA template | 3 | PASS |
 | Demo behaviour audit regressions | 11 | PASS |
-| **RL training regressions** (`tests/test_rl_training.py`) | **13** | **PASS (new 2026-10-01)** |
-| **Total** | **67** | **PASS** |
+| RL training regressions (`tests/test_rl_training.py`) | 13 | PASS (2026-10-01) |
+| Step 5 benchmark contracts (`tests/test_step5_benchmark.py`) | 12 | PASS (2026-10-01) |
+| **Total** | **79** | **PASS** |
 
-**Correction to the record:** this file previously said "43 tests" and a "working tree modified" state; the 43 figure predated the 11 demo-behaviour tests added in commit `56a1e3d`. README's "54" was the correct pre-2026-10-01 count. The 13 RL tests bring it to 67.
+**Correction to the record:** this file previously said "43 tests" and a "working tree modified" state; the 43 figure predated the 11 demo-behaviour tests added in commit `56a1e3d`. README's "54" was the correct pre-2026-10-01 count. 13 RL tests → 67, then 12 Step-5 tests → 79.
 
 | Test class | Count | Status |
 |---|---:|---|
@@ -248,4 +284,5 @@ $ .venv/bin/python -c "from src.env.state import reachable_state_count; print(re
 - 2026-08-30: non-NZ infrastructure complete, real-data ingest validated, theoretical vs empirical distinguished, NZ flagged missing, tests green, Polish isolated (V-4/V-7 pending, no tuning)
 - 2026-09-04 (audit update): all four plan steps (V-1 source location, Step 2 sweep, Step 3 preliminary reports, V-2 PRISMA template) complete and locked behind contract tests. 43/43 tests pass. Every markdown file updated and cross-referenced. Polish isolation enforced. No novelty claim wording. Licence on the NZ 1,054-row file is the only remaining V-1 blocker.
 - 2026-09-30 (env rebuild + real-data run): venv rebuilt, results/ regenerated from the real Saudi/UCI CSVs (`source: real` everywhere), no-claim test scope fixed to skip hidden dirs, all four living docs updated with real numbers. 43/43 tests pass (superseded count — see 2026-10-01). The 8 verification gates are unchanged — all remaining substantive work is gated on human/supervisor actions (V-1 licence, V-2 searches, V-4/V-6/V-7 sign-offs, V-5/V-9/V-10 not started).
-- 2026-10-01 (audit + Parts 0+1): repo audit found **no RL policy had ever been trained** — `DQNPolicy.train_step` was never called and discarded its legal-action mask (bootstrap optimised toward illegal actions); `PPOPolicy` had no training method at all. Both fixed, replay buffer + training script added, 13 regression tests written. A third alleged defect (terminal next-state shapes breaking `torch.cat`) was investigated and **retracted** — `torch.cat(dim=0)` concatenates along dim 0, so the original code did not raise; do not repeat that claim. Environment rebuilt (CPU-only torch; `/tmp` tmpfs is too small for the CUDA build) and all three datasets restored — two of them as documented conversions. Step 2/3 re-run, 8 artifacts `source: real`, **67/67 tests pass**. `diagnosisReady.md` and `RL_TRAINING_REPORT.md` added. **Part 2 (benchmarking the trained policies) is the next unblocked step**; Polish remains sealed; the 8 verification gates are unchanged.
+- 2026-10-01 (Parts 0+1): repo audit found **no RL policy had ever been trained** — `DQNPolicy.train_step` was never called and discarded its legal-action mask (bootstrap optimised toward illegal actions); `PPOPolicy` had no training method at all. Both fixed, replay buffer + training script added, 13 regression tests written. A third alleged defect (terminal next-state shapes breaking `torch.cat`) was investigated and **retracted** — `torch.cat(dim=0)` concatenates along dim 0, so the original code did not raise; do not repeat that claim. Environment rebuilt (CPU-only torch; `/tmp` tmpfs is too small for the CUDA build) and all three datasets restored — two of them as documented conversions. **67/67 tests pass**.
+- 2026-10-01 (Parts 2+3): **first real RL measurement.** `scripts/step5_policy_benchmark.py` benchmarks DQN/PPO/Greedy/Random/ExactDP at matched budgets B∈{1..6} with a shared evaluator, plus the V\*−V_emp optimality gap. **Result: greedy-IG attains the exact optimum (gap ≤0.013); DQN (~0.04–0.055) and PPO (0.015–0.138) do not — PPO is worse than random at B=5/B=6.** Negative result for RL on this task, reported as such. 12 benchmark tests added → **79/79 pass**. `POLICY_BENCHMARK_REPORT.md` written. Polish still sealed; 8 verification gates unchanged. **Top next steps: multi-seed variance, then V-6 (λ) — every current number is λ=0, so cost is unpriced and adaptive stopping is unexcused.**

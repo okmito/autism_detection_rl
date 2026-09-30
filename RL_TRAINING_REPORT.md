@@ -1,8 +1,8 @@
 # RL Training Report — Part 1 (2026-10-01)
 
 **Purpose:** document the defects found in RL code that had never executed, the fixes applied, and the initial real training runs.
-**Companion:** `diagnosisReady.md` §3 records the audit that prompted this work.
-**Status:** Part 1 complete. **Part 2 (benchmarking) NOT started.**
+**Companion:** `diagnosisReady.md` §3 records the audit that prompted this work; `POLICY_BENCHMARK_REPORT.md` reports how the trained policies actually perform.
+**Status:** Part 1 complete. **Part 2 (benchmarking) complete 2026-10-01** — and it found that greedy-IG attains the exact optimum while these policies do not.
 
 ---
 
@@ -88,19 +88,24 @@ and a `tag` naming the open gates. Every future RL artifact must carry the same 
 
 ---
 
-## 6. What is still missing
+## 6. Part 2 outcome — the trained policies lose to greedy
 
-**Part 2 — the benchmark — has not been run.** DQN and PPO have been trained but never evaluated at matched question-count budgets against Greedy-IG, Random, or the exact DP. Until that happens the project's central claim (learned vs heuristic vs exactly-solved optimum) remains unevidenced, exactly as it was before this work.
+**The benchmark has been run** (`scripts/step5_policy_benchmark.py`, 2026-10-01). DQN and PPO were evaluated at matched budgets B ∈ {1..6} against Greedy-IG, Random, and the exact DP, using the same `run_episode` evaluator and the same held-out split.
 
-Nothing here changes the pre-existing result that the sealed Polish cohort (252 rows, clinician diagnoses) is the single cohort able to support any clinical claim.
+**Result: the trained policies lose to greedy.** Optimality gap V\* − V_emp at B=6 is **+0.007 for greedy, +0.039 for DQN, +0.138 for PPO**. PPO is worse than uniform-random at B=5 and B=6. Full analysis in `POLICY_BENCHMARK_REPORT.md`.
+
+So the training pipeline works and the measurement is sound — but converging to a low loss did not translate into a better policy. That is a finding about this task, not a bug in the code.
+
+Remaining gaps: single seed (no variance), λ=0 only (V-6 pending). Nothing here changes the pre-existing result that the sealed Polish cohort (252 rows, clinician diagnoses) is the single cohort able to support any clinical claim.
 
 ---
 
 ## 7. Reproduce
 
 ```bash
-.venv/bin/python -m pytest tests -q                                    # 67 passed
+.venv/bin/python -m pytest tests -q                                    # 79 passed
 .venv/bin/python scripts/step4_train_policies.py --episodes 400 --budget 6 --seed 0
+.venv/bin/python scripts/step5_policy_benchmark.py --episodes 400 --budgets 1,2,3,4,5,6
 ```
 
-Writes `results/step4_policy_training_saudi.json`. Requires the Saudi CSV under `data/raw/`; `--synthetic` runs without data.
+Writes `results/step4_policy_training_saudi.json` and `results/step5_policy_benchmark_saudi.{json,csv}`. Requires the Saudi CSV under `data/raw/`; `--synthetic` runs without data.
