@@ -84,15 +84,45 @@ def test_no_policy_exceeds_its_budget(art):
         )
 
 
+#: Every policy the benchmark must produce at every budget. `exact_fixed_subset`,
+#: `static_rfe` and `irt_cat` are spec §17 #4/#5/#8; they were written but never
+#: instantiated anywhere, so H1 ("adaptive beats the exact best fixed subset at
+#: matched budget") had no runnable comparator until P1-d.
+#: `beta_greedy` is the P1-f arm: a Beta(1,1) posterior with EVOI selection and
+#: cost-based stopping, added so H1 is testable against a non-degenerate adaptive
+#: criterion. `greedy` stays in the list and `GreedyIGPolicy` is unchanged.
+REQUIRED_POLICIES = [
+    "greedy", "random", "dqn", "ppo", "exact",
+    "exact_fixed_subset", "static_rfe", "irt_cat",
+    "beta_greedy",
+]
+
+
 def test_all_policies_present_at_every_budget(art):
     budgets = set(art["budgets_evaluated"])
     seen = {r["policy"] for r in art["per_budget"]}
-    for name in ["greedy", "random", "dqn", "ppo", "exact"]:
+    for name in REQUIRED_POLICIES:
         assert name in seen, f"{name} missing from the benchmark"
     for b in budgets:
         for name in seen:
             assert any(r["B"] == b and r["policy"] == name
                        for r in art["per_budget"]), f"{name} missing at B={b}"
+
+
+def test_h1_comparator_is_present_and_spends_the_full_budget(art):
+    """H1 compares the adaptive policy against the exact best *fixed* subset.
+
+    A fixed subset cannot stop early, so it must spend exactly B questions at
+    every budget. If it ever reports fewer, the comparator has silently become an
+    adaptive policy and H1 would be measuring the wrong thing.
+    """
+    for row in art["per_budget"]:
+        if row["policy"] in ("exact_fixed_subset", "static_rfe", "irt_cat"):
+            assert row["items_asked_mean"] == pytest.approx(float(row["B"])), (
+                f"{row['policy']} asked {row['items_asked_mean']} at B={row['B']}; "
+                f"a fixed/generic-CAT arm must spend the whole budget"
+            )
+            assert row["stopped_early_frac"] == 0.0
 
 
 def test_brier_scores_in_range(art):
@@ -127,16 +157,44 @@ def test_artifact_has_git_sha_and_env(art):
 
 
 def test_training_converged(art):
-    """Both learners must show a decreasing loss — otherwise nothing was learned.
+    """Both learners must have received a learning signal at all.
 
-    This asserts the pipeline works, not that the policies are good.
+    Assertion changed 2026-10-01. This previously required
+    ``loss_final_50 < loss_first_50``, which was only satisfiable because the
+    rollout collector stored no reward anywhere: DQN was fitting
+    ``y = gamma * max_a Q(s', a)`` against an all-zero target, which it can
+    drive to zero by shrinking every Q-value. Once ``collect_episode`` started
+    attaching the §10 terminal reward the target became a real, high-variance
+    Monte Carlo value, and the loss legitimately rises before settling. A
+    monotonically falling loss is therefore not a correctness property of DQN and
+    is no longer asserted.
+
+    What is asserted instead is the thing that actually matters: that the
+    terminal reward reached the buffer. That is verified directly, without the
+    benchmark artifact, in ``tests/test_rl_training.py::
+    test_collect_episode_stores_the_terminal_reward``.
     """
     d = art["training"]["dqn"]
     assert d["n_updates"] > 0
-    if d["loss_first_50"] is not None and d["loss_final_50"] is not None:
-        assert d["loss_final_50"] < d["loss_first_50"], (
-            "DQN loss did not decrease over training"
-        )
+    assert d["loss_first_50"] is not None
+    assert d["loss_final_50"] is not None
+
+
+def test_stopped_early_frac_is_not_a_constant(art):
+    """P0-4 guard: `stopped_early_frac` must be informative again.
+
+    `run_episode` used to label every episode `"policy_stop"`, so this metric was
+    1.0 for every policy at every budget and carried no information. It is now
+    computed from the real termination cause, so at least one policy must differ
+    from 1.0 somewhere in the grid — the exact reference is the one that stops
+    early. This guards against the label regressing to a constant.
+    """
+    fracs = [r["stopped_early_frac"] for r in art["per_budget"]]
+    assert all(0.0 <= f <= 1.0 for f in fracs)
+    assert min(fracs) < 1.0, (
+        "stopped_early_frac is 1.0 for every policy/budget; the voluntary-vs-"
+        "exhausted distinction has regressed to a constant"
+    )
 
 
 def test_csv_matches_json(art):

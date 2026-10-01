@@ -20,6 +20,14 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+# A Windows console defaults to cp1252, which cannot encode the section-sign and
+# arrow characters this walkthrough prints.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 os.chdir(REPO)
 
 import numpy as np
@@ -169,7 +177,18 @@ def main() -> int:
     print(f"{'policy':<12} {'Brier':>8} {'UAR':>8} {'avg questions':>15}")
     print(f"{'greedy IG':<12} {g[0]:>8.4f} {g[1]:>8.4f} {g[2]:>15.2f}")
     print(f"{'random':<12} {r[0]:>8.4f} {r[1]:>8.4f} {r[2]:>15.2f}")
-    print("adaptive question selection beats random selection at the same budget.")
+    # This comparison is NOT at a matched budget. RandomPolicy draws uniformly
+    # from the legal actions, which include STOP, so it ends some episodes early
+    # (measured on the demo test split: mean 3.93 questions, ~9% ask nothing,
+    # ~45% reach the full budget). Reporting a single "same budget" line here
+    # overstated the result: part of the gap is that random answered fewer
+    # questions. The matched-budget comparison is in POLICY_BENCHMARK_REPORT.md
+    # §A.4, and it is the one that matters.
+    print()
+    print(f"NOTE: not a matched-budget comparison - random asked {r[2]:.2f} questions on")
+    print(f"      average vs greedy's {g[2]:.2f}, because the random baseline can also")
+    print("      choose STOP. Part of this gap is fewer questions, not better selection.")
+    print("      Matched-budget result: POLICY_BENCHMARK_REPORT.md §A.4.")
 
     # ------------------------------------------------------------- STEP 8
     hr("STEP 8 - EXACT OPTIMUM (backward-induction DP on a 50-record subsample)")

@@ -35,10 +35,18 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+# See the note in step2_train_and_sweep.py: a cp1252 console aborted this script
+# on the first lambda character it tried to print, before any artifact was written.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 os.chdir(REPO)
 
 import numpy as np
-from sklearn.model_selection import StratifiedKFold
+from src.data.splits import stratified_split, split_fingerprint, SCHEME
 
 from src.data.ingest import load_dataset, SAUDI_CSV
 from src.models.masked_predictor import MaskedPredictor
@@ -68,15 +76,14 @@ def _git_sha() -> str:
 
 
 def _split(records, seed: int = 0):
-    y = np.array([r["label"] for r in records])
-    skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=seed)
-    train_idx, test_idx = next(skf.split(np.arange(len(records)), y))
-    train_idx, val_idx = next(skf.split(train_idx, y[train_idx]))
-    return (
-        [records[i] for i in train_idx],
-        [records[i] for i in val_idx],
-        [records[i] for i in test_idx],
-    )
+    """Canonical split — delegates to ``src.data.splits.stratified_split``.
+
+    The local copy this replaces passed the relative indices returned by the
+    second ``skf.split(train_idx, ...)`` call straight into ``records[i]``, so the
+    "validation" set was drawn from the wrong records and overlapped both train
+    and test. See ``src/data/splits.py``.
+    """
+    return stratified_split(records, seed=seed)
 
 
 def _run_episodes(records, policy, predictor, B: int, seed: int = 0) -> list[dict]:
@@ -136,7 +143,7 @@ def main() -> int:
 
     # ----- Train predictor (Saudi) -----
     train, val, test = _split(saudi, seed=0)
-    pred = MaskedPredictor(n_items=10, hidden=[128, 64], calibration="isotonic")
+    pred = MaskedPredictor(n_items=10, hidden=[128, 64], calibration="isotonic", seed=0)
     pred.fit(train, epochs=20, lr=1e-3, batch_size=32, seed=0)
     pred.fit_calibrator(val, method="isotonic")
 
@@ -236,6 +243,9 @@ def main() -> int:
         "n_val": len(val),
         "n_test": len(test),
         "seed": 0,
+        "predictor_version": pred.version,
+        "split_scheme": SCHEME,
+        "split_fingerprint": split_fingerprint(train, val, test),
         "rows": rows,
         "terminal_reference": ref,
     }

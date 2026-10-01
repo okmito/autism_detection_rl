@@ -1,15 +1,139 @@
 # Current Project State
 
-**Last updated:** 2026-10-01 (Parts 0+1+2+3 complete)
+**Last updated:** 2026-10-01 (Parts 0+1+2+3, three RL/method audits, then P1-a/b/d)
 **Operator request:** "make the project ready for diagnosis" → audit produced `diagnosisReady.md`; Parts 0–3 implemented.
-**Branch state:** see git log. **79 tests pass** (54 pre-existing + 13 RL + 12 Step-5 benchmark).
+**Branch state:** see git log. **204 tests pass, 0 skipped.**
+**All artifacts are reproducible from their recorded seed** (Reproducible from the recorded seed, with the sole exception of recorded wall-clock fields (generated, wall_seconds, 	ime_sec, dp_seconds); every substantive number is identical across reruns.) and carry `predictor_version: 2` and `split_fingerprint: b2021998a83e7224`.
+
 **READ FIRST, in this order:**
-1. `diagnosisReady.md` — the audit: the RL half had **never been trained** before 2026-10-01, and what clinical readiness would actually require.
-2. `POLICY_BENCHMARK_REPORT.md` — **the headline result**: greedy-IG attains the exact optimum; both learned policies do not.
+1. `V6_LAMBDA_DECISION.md` — the V-6 evidence pack, the objective-saturation finding, and the proposed cost grid. **Does not sign off V-6.**
+2. `RL_TRAINING_REPORT.md` **§2–§3** — the rollout collector delivered no reward; the split was contaminated; the predictor was mis-trained and unseeded.
+3. `POLICY_BENCHMARK_REPORT.md` — carries a **retraction banner**. Read **§A** for current numbers and **§A.4** for the H1 result.
+4. `diagnosisReady.md` — the audit: what clinical readiness would actually require.
 
-## 2026-10-01 — Part 2: policy benchmark ✅ (first real RL measurement)
+## 2026-10-01 (sixth pass) — P1-f: a Beta-prior / EVOI arm; P1-g: saturation promoted to the front page
 
-`scripts/step5_policy_benchmark.py` evaluates DQN, PPO, Greedy-IG, Random, and ExactDP at matched budgets B ∈ {1..6} on the same held-out test split, same predictor, same `run_episode` evaluator. Artifact: `results/step5_policy_benchmark_saudi.{json,csv}`. Tests: `tests/test_step5_benchmark.py` (12).
+**`src/policies/beta_greedy.py`, a NEW arm. `GreedyIGPolicy` deliberately untouched.** It exists because greedy's criterion is *vacuously zero* on this data: on a pure support `H(Y|s) = 0` and every child support is pure too, so every legal item's IG is exactly 0 and `argmax` falls through to the lowest legal index.
+
+```
+decision states sampled (held-out, B=6)      : 480
+  with a pure support                        : 195
+  greedy criterion identically zero on those : 195/195
+  beta_greedy EVOI identically zero on those: 8/195
+  median EVOI spread across legal items there: 0.000984
+```
+
+Two changes: a **Beta(1,1) posterior** (interior on a pure support, and it correctly treats a 3-record agreement as weak evidence — 0.918 bits at n=1 vs 0.080 at n=100), and **EVOI stopping** on the actual terminal utility (`gain_j = u(s,j) − u(s)`, stop when `max_j gain_j < λ·c_j`). At λ=0 it never stops early, which makes AB-7 separable. `explain()` returns the posterior, 95% credible interval, per-item EVOI, entropy IG, runner-up margin and stop margin — the P3-1 hook designed in rather than retrofitted.
+
+**Results (B=6):** `beta_greedy` tracks the exact reference's question count across the whole λ sweep, beats it on held-out reward at 4 of 6 λ values, and beats `greedy` at every λ ≥ 0.005 (greedy cannot stop, so it pays for all six). At λ=0 the two are **bit-identical on the train objective** (+0.004225) yet `beta_greedy` generalises better (0.0482 vs 0.0512 Brier) — a direct measurement of the saturation problem: the empirical objective cannot tell them apart, the held-out data can.
+
+**⚠ RETRACTED — see Step 8.** This entry originally claimed *"one reward, two scales"*: that the support-posterior EVOI was ~100× smaller than the neural-predictor marginal utility, so a λ grid could not transfer. **That was wrong.** It rested on a 0.05–0.15 predictor figure that **no code ever measured** — prose only. `scripts/step8_evoi_scale_analysis.py` measured both sides with the same functional form and found them in the **same units** (ratio 0.43 at the median, 0.84 at the mean, 1.02 at p75). What survives is a *different* problem: the support-posterior EVOI is **analytically non-positive on a pure support**, so the statistic behaves as a purity indicator, and the λ grid spans only ~20 distinct behaviours with a cliff between 0.001 and 0.003. The open decision is `V6_STOPPING_THRESHOLD_DECISION.md`; **V-6 is not signed off and no threshold is selected.**
+
+**H1 now fails for three independent adaptive arms** (greedy, beta_greedy, DQN) at B=5 and B=6 — the reversal is not an artefact of the greedy heuristic. Adding a principled non-degenerate criterion did not rescue it.
+
+**P1-g:** the saturation finding and the H1 reversal are now on the front page of `diagnosisReady.md` (§0, §0A) and in the `POLICY_BENCHMARK_REPORT.md` banner, together with the corrected P0 register. V-6 and Polish are named as the two items that move to the front of the queue.
+
+## 2026-10-01 (fifth pass) — P1-e: the DQN collapse was an undertrained network
+
+`scripts/step7_rl_diagnosis.py`, 5 seeds × {200, 400, 1000, 2000} episodes, 60 held-out records, trained predictor. Two arms, differing **only** in the learning target:
+
+| objective | episodes | items (mean ± sd) | UAR (mean ± sd) | distinct states |
+|---|---|---|---|---|
+| bootstrap (spec §11.2) | 200 | 0.00 ± 0.00 | 0.5000 ± 0.0000 | 167 |
+| bootstrap | 400 | 0.60 ± 0.55 | 0.6615 ± 0.1485 | 352 |
+| bootstrap | 1,000 | 4.30 ± 1.56 | 0.8881 ± 0.0180 | 1,347 |
+| **bootstrap** | **2,000** | **5.94 ± 0.11** | **0.8870 ± 0.0184** | 3,462 |
+| **returns** | **200** | **5.13 ± 0.66** | **0.8851 ± 0.0362** | 639 |
+| returns | 400 | 4.97 ± 1.12 | 0.8775 ± 0.0441 | 1,123 |
+| returns | 1,000 | 5.01 ± 0.42 | 0.8984 ± 0.0131 | 2,283 |
+| returns | 2,000 | 5.59 ± 0.28 | 0.8840 ± 0.0162 | 3,770 |
+
+Reference: greedy 6.00 items / UAR 0.9021 / Brier 0.0571.
+
+**The 400-episode DQN figure was an undertrained network, not a property of RL.** At 400 episodes the bootstrapped objective is still at 0.60 items; it needs ~2,000 to reach 5.94. The Step-4/Step-5 default has been raised from 400 to 2,000, and `tests/test_step7_rl_diagnosis.py::test_benchmark_uses_the_diagnosed_episode_budget` fails if Step 5 is ever run at a smaller budget again.
+
+**Why the bootstrap target is slow.** §11.1 emits a reward only at the end of an episode, so a `B`-step episode with immediate rewards needs a `B`-step bootstrap chain; the root action's value is then a product of `B` noisy estimates. Storing discounted return-to-go and disabling the bootstrap term removes the chain and reaches plateaued behaviour by **200 episodes** — an order of magnitude sooner.
+
+**But the diagnosis does not rescue RL.** Neither arm beats greedy (UAR 0.887 / 0.884 vs 0.9021) or the exact best fixed subset on Brier. It makes the RL numbers *credible*, not favourable.
+
+**PPO degrades with more training** (1.43 items, Brier 0.1162 at 2,000 vs 0.0953 at 400). With λ=0 nothing penalises stopping early, so extra training drives STOP's advantage upward. That is the strongest argument yet for signing off V-6.
+
+**A pre-committed criterion that asked the wrong question.** The stop rule was "state-coverage growth < 10% and items-mean flat", and it returned `still_improving = True` for both arms. Coverage genuinely keeps rising (+156%, +134% in the second half) — but coverage is not a convergence test for a *policy*. Behaviour plateaued (UAR delta −0.0011 and −0.0144 across the last two budgets). Both metrics are now recorded, with the mis-specification documented rather than quietly replaced.
+
+## 2026-10-01 (fourth pass) — P0-10: the predictor was unseeded; P1-d: H1 is finally testable
+
+**P0-10 — every artifact was non-reproducible regardless of its recorded seed.** `MaskedMLP` builds `nn.Linear` layers, which draw from torch's *global* RNG, and `fit()` seeded torch *after* construction. `step3` and `step5` never seeded it in `main()` at all. Found by accident when greedy's Brier moved between two runs of the same command — greedy depends on no training, so something upstream was nondeterministic. Fixed inside `MaskedPredictor.__init__(seed=...)`, which seeds only around construction and then restores the caller's RNG state. `step2`/`step5` CSVs and `predictor_saudi_metrics.json` now hash identically across runs. Detail in `AUDIT_REPORT.md`.
+
+**P1-d — the §17 baselines are wired.** `ExactFixedSubsetPolicy`, `StaticRFEPolicy` and `IRTCATPolicy` existed but were instantiated nowhere, so **H1 had no runnable comparator**. All three are now arms in Step 5, and each had a defect fixed first — most importantly `IRTCATPolicy`'s difficulty estimate gave `b <= 0` for 10/10 items, flattening Fisher information so CAT selection degenerated to a discrimination proxy. Detail in `AUDIT_REPORT.md`.
+
+### H1 result — not supported at the upper budgets
+
+| B | greedy Brier | exact best fixed subset | H1 |
+|---|---|---|---|
+| 3 | **0.0876** | 0.1034 | supported |
+| 4 | **0.0691** | 0.0850 | supported |
+| 5 | 0.0655 | **0.0448** | **not supported** |
+| 6 | 0.0512 | **0.0479** | **not supported** |
+
+The adaptive advantage shrinks and reverses as the budget grows, **even though greedy stays strictly closer to `V*` on the empirical objective at every budget** (+0.0042 vs +0.0141 at B=6). The advantage lives inside the training support; the per-episode information-gain ordering is what fails to transfer. Spec §4 pre-registers that failing to outperform the exact best fixed subset is a valid result, so this is reportable — but it is a real negative for the project's adaptive-value hypothesis and should be written up as such, not softened.
+
+`exact_fixed_subset` and `static_rfe` select **identical** subsets at every budget on this cohort — a useful consistency signal between a cheap and an exhaustive selector, now asserted in the tests.
+
+## 2026-10-01 (third pass) — P0-9: the split was contaminated, and the predictor was mis-trained
+
+Found by a test written for an unrelated phase. **This invalidated every number produced before it.**
+
+**P0-9 — train/val/test contamination.** Four copies of the split passed *relative* indices from a nested `skf.split(train_idx, ...)` straight into `records[i]`. On the 506-row Saudi cohort **71 of 95 validation records were also in train and 24 were in test**. The row counts came out at exactly the documented 284/95/127, which is why it survived review — the sizes were right, the membership was wrong. `src/data/splits.py` now owns the canonical scheme and `split_fingerprint` detects this class of error; all five consumers (step2/3/4/5, demo) agree on `b2021998a83e7224`. Separately, `step4` used a divergent 60/20/20 split (303/101/102), violating spec §17.
+
+**P1-b — `MaskedPredictor` v1 → v2.** One masked training view per record (284 states for a 41-dim input); the `budget_norm` feature trained on the `budget=10` grid while inference runs at `budget=B` (four of seven inference values never seen); calibrator fitted on fully observed states only, so it extrapolated on every partial state. **Test Brier 0.0630 → 0.0512, UAR 0.8513 → 0.8930, AUROC 0.9627 → 0.9882, ECE 0.0560 → 0.0475.** v1 is exactly reproducible via `masks_per_record=1, eval_budgets=[n_items]`.
+
+## 2026-10-01 — P1-a: V-6 evidence pack ✅ (does not sign off V-6)
+
+`scripts/step6_lambda_sweep.py` → `results/lambda_sweep_saudi.{json,csv}` (64 cells, 8 λ × 8 B). **Predictor-independent**: `ExactDP` reads the training support directly, and the held-out comparison uses the empirical support posterior rather than the neural predictor — so the pack stays valid across the P1-b retrain. Analysis and proposed grid in `V6_LAMBDA_DECISION.md`.
+
+**Proposed grid: λ ∈ {0, 0.005, 0.01, 0.02, 0.05}**, reported as a cost–utility frontier, never relabelled as a budget curve. Excluded: λ=0.1 (cost dominates) and λ=0.2 (degenerate — the optimum asks **zero** questions).
+
+**The finding that reframes everything:** at λ=0 the empirical support becomes *pure* after ~4 questions (0.000 of states at depth 1 → 0.820 at depth 4 → 1.000 at depth 7), so `u_stop = 1 - (p_emp - y)^2` is exactly 1.0, `V*` is exactly `1.000000`, and no further question can raise the reward. The exact policy's `pure_support_frac_at_stop` is **1.00** — it stops early precisely when the objective has saturated, not when evidence is sufficient. The measured value of adaptive stopping at λ=0 is a property of the label rule. **This makes the Polish transfer test (RQ3/H2) the load-bearing experiment, not a secondary one.**
+
+## 2026-10-01 (second pass) — the rollout collector delivered no reward ⚠️
+
+Part 1 fixed `train_step` but missed `collect_episode`, which stored `r = 0.0` on every row, attached the legal set of the state each transition *left* rather than the one it *entered*, and staged terminal rows in a list nothing drained. DQN fitted `y = γ·max Q(s',a)` against an all-zero target; PPO's advantage was **identically zero**. The first Step-5 conclusion ("RL loses to greedy") was therefore a measurement defect. Full detail in `RL_TRAINING_REPORT.md §2`.
+
+| # | Defect | Fix |
+|---|---|---|
+| P0-1 | Terminal reward discarded | §10 utility attached to the terminal transition |
+| P0-2 | `legal_next` was the legal set of the state *left* | now the legal set of `s_next` |
+| P0-3 | `end_episode` never called → STOP rows discarded, `_pending` leaked | transitions written with `add`, `_pending` stays 0 |
+| P0-4 | `stop_reason` could never be `"budget_exhausted"` → `stopped_early_frac` ≡ 1.0 | termination cause recorded properly |
+| P0-7 | epsilon-greedy used the unseeded module `random` | per-policy seeded `random.Random(seed)` |
+| — | `PPOPolicy.legal_mask(None)` raised `TypeError` on terminal rows (latent, hidden by P0-3) | `None` ⇒ unconstrained |
+| — | importance ratio evaluated `nan` (`-inf − -inf`) | finite `LOG_FLOOR` |
+| — | step2/3/4/5 crashed on their final `print` (cp1252 cannot encode `→`/`λ`), exiting non-zero *after* writing artifacts — this is why the step4/step5 artifacts were missing and 12 tests skipped | stdout/stderr reconfigured to UTF-8 |
+
+## 2026-10-01 — benchmark status after all five corrections
+
+At B=6, Saudi test split, `predictor_version: 2`, split fingerprint `b2021998a83e7224`, seed 0, λ=0, **2,000 training episodes**, reproducible from seed. **All eight §17 arms present, plus eta_greedy (P1-f).**
+
+| policy | Brier | UAR | items | stop_early | train gap V\*−V_emp |
+|---|---|---|---|---|---|
+| exact_fixed_subset | **0.0479** | 0.9167 | 6.00 | 0.00 | +0.014085 |
+| static_rfe | **0.0479** | 0.9167 | 6.00 | 0.00 | +0.014085 |
+| greedy | 0.0512 | 0.8930 | 6.00 | 0.00 | **+0.004225** |
+| dqn | 0.0640 | **0.9112** | 5.98 | 0.02 | +0.034918 |
+| exact | 0.0644 | 0.8812 | 4.45 | 0.77 | 0 by definition |
+| irt_cat | 0.0686 | 0.8993 | 6.00 | 0.00 | +0.026892 |
+| random | 0.0918 | 0.8220 | 4.02 | 0.55 | +0.091082 |
+| ppo | 0.1162 | 0.8398 | 1.43 | 1.00 | +0.137615 |
+
+- **Greedy-IG's near-optimality survived all five corrections** — gap ≤ 0.0133 at every budget, and it is the single closest policy to `V*` at every budget.
+- **But the exact best fixed subset wins held-out Brier at B=5 and B=6.** See the H1 table above. This is the project's most important current result and it runs *against* the adaptive-value hypothesis.
+- **DQN now trains to a sane policy** (5.98 items, UAR 0.9112, train gap +0.035) but still does not beat greedy on the empirical objective or the fixed subset on Brier.
+- `static_rfe` is bit-identical to `exact_fixed_subset` at every budget.
+- The Step-5 table is still single-seed — the 5-seed variance is in the Step-7 diagnosis, not here. No gap difference above is interpretable as an effect.
+
+## 2026-10-01 — Part 2: policy benchmark ⚠️ SUPERSEDED — see the sections above
+
+`scripts/step5_policy_benchmark.py` evaluates DQN, PPO, Greedy-IG, Random, and ExactDP at matched budgets B ∈ {1..6} on the same held-out test split,same predictor, same `run_episode` evaluator. Artifact: `results/step5_policy_benchmark_saudi.{json,csv}`. Tests: `tests/test_step5_benchmark.py` (12).
 
 **Optimality gap V\* − V_emp (train split, λ=0, lower is better):**
 
@@ -26,6 +150,11 @@ Behavioural notes: DQN **never stops early** (asks exactly B every time — no a
 
 Caveats: single seed (no variance), λ=0 only (V-6 pending), and **all labels are circular** — these numbers measure fit to the questionnaire's own scoring rule, not autism. Full analysis in `POLICY_BENCHMARK_REPORT.md`.
 
+> ⛔ **The Part 2 section above is retained verbatim and is VOID.** The DQN loss
+> "0.0068→0.0002" and PPO "entropy flat at ~2.11" quoted here are signatures of a
+> training loop that received no reward at all. Read the audit section at the top
+> of this file, `RL_TRAINING_REPORT.md §2`, and `POLICY_BENCHMARK_REPORT.md §A`.
+
 ## 2026-10-01 — Part 0 (environment) + Part 1 (RL code)
 
 ### Part 0 — environment restored ✅
@@ -35,7 +164,7 @@ The repo had **no `.venv`, no `data/raw/`, no `results/`** (all gitignored), so 
 - Re-ran Step 2 + Step 3: all 8 artifacts regenerated with `source: real`. All 48 DP runs `status=optimal`. State counts match `STATE_COUNT_VERIFICATION.md` exactly.
 - Test suite: 40 passed / 14 skipped → after regeneration **54 passed, 0 skipped**.
 
-### Part 1 — RL code fixed and trained ✅
+### Part 1 — RL code fixed ⚠️ incomplete (collector not fixed)
 **Two** real defects in code that had never executed (full detail in `RL_TRAINING_REPORT.md`):
 1. `DQNPolicy.train_step` built a legal-action mask and discarded it → bootstrap optimised toward illegal actions.
 2. `PPOPolicy` had **no training method at all** — the critic never received a gradient.
@@ -150,17 +279,46 @@ The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour t
 | V-10 | Tier-3 controlled-access go/no-go | Not started. |
 
 ## Next Required Steps (in priority order)
-0. ~~Part 2 (benchmark the trained policies)~~ ✅ **DONE 2026-10-01** — see top of file.
-1. **Multi-seed variance (NEW — now the top methodological gap).** The Step-5 gaps come from a single seed. Run `config.eval.seeds = 10` seeds and report mean ± spread; the current DQN/PPO-vs-greedy differences are not interpretable without it. Add `--seeds` to `scripts/step5_policy_benchmark.py`.
-2. **V-6 (λ grid sign-off).** Every current number is λ=0, so cost is unpriced and adaptive stopping is unexcused — which is exactly the regime where a sequential policy could beat greedy. Resolving λ is the highest-value change to the experiment.
-3. **Diagnose PPO's early stopping** (1.84 items at B=6). Likely exploration/credit-assignment; isolate before further tuning.
-4. **V-1:** Human obtains licence-clear copy of `Toddler Autism dataset July 2018.csv` (or defensible equivalent) and places at `data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv`. Agent then runs the `_load_nz_toddler_csv` provenance path (plan in `V1_NZ_DATASET_RESOLUTION.md` §6) and re-runs Step 2/3 on the real NZ cohort.
-2. **V-2:** Human executes the 12 PRISMA queries; agent assists with dedup / inclusion-checks. Update `AGENT_PROGRESS.md` with search date, N_incl_qual, N_novelty.
-3. **V-4:** Freeze MDE / comparison family. After V-4, run cost-utility vs λ figures (currently blocked by V-6).
-4. **V-6:** Sign off on λ grid. After V-6, regenerate Step 2 sweep with the approved λ values.
-5. **V-7:** Supervisor freezes Polish denominator (117 controls). After V-7, run confirmatory Polish transfer analysis (RQ3) — currently no Polish run.
-6. Generate confirmatory figures: gap (V* − V_emp), cost-utility vs λ, transfer curves.
-7. After V-2 completes, replace the "preliminary" tag on Step 3 artifacts with the supervisor-signed status.
+
+> **Re-prioritised 2026-10-01 after the fourth pass.** Items 0-4 below are done;
+> what remains is listed from item 5. The P1-e, P1-f and P1-g phases have not
+> been started.
+
+0. ~~P0 collector defects~~ ✅ `RL_TRAINING_REPORT.md §2`
+0. ~~P0 split contamination (P0-9)~~ ✅ `RL_TRAINING_REPORT.md §3.1`
+0. ~~P0 unseeded predictor (P0-10)~~ ✅ artifacts now reproducible from their seed
+0. ~~P1-b predictor v1 → v2~~ ✅ `RL_TRAINING_REPORT.md §3.2`
+0. ~~P1-a V-6 evidence pack~~ ✅ `V6_LAMBDA_DECISION.md` — **decision input only; V-6 is NOT signed off**
+0. ~~P1-d wire the §17 baselines~~ ✅ `AUDIT_REPORT.md` — **H1 now measurable, and not supported at B=5/6**
+0. ~~P1-e bounded DQN diagnosis~~ ✅ `POLICY_BENCHMARK_REPORT.md §A.5` — the collapse was an undertrained network; benchmark default raised to 2,000 episodes
+
+1. **Supervisor sign-off on the λ grid (V-6).** This is the single blocking gate for every cost-dependent claim, and the evidence pack is ready. Proposed: λ ∈ {0, 0.005, 0.01, 0.02, 0.05} as a cost–utility frontier. Nothing in the agent's scope can substitute for this. **Step 7 strengthens the case**: PPO's stopping behaviour *degrades* with more training precisely because λ=0 leaves stopping unpriced.
+2. **Multi-seed the Step-5 table.** The 5-seed variance now exists only in the Step-7 diagnosis. Add `--seeds` to `step5_policy_benchmark.py` and report mean ± sd, so the A.3 gap differences become interpretable. Bounded scope — do not open-ended-tune the network.
+3. **Consider promoting the return-to-go target to the primary DQN.** Step 7 shows it reaches plateaued behaviour ~10× sooner (200 vs 2,000 episodes) and is state-coverage-equivalent. That is a spec §11.2 deviation (Double DQN with a bootstrap target), so it is an owner decision, not an agent one. It is currently recorded as an ablation in Step 7.
+4. **P1-f — a prior-based policy as a NEW arm** (`src/policies/beta_greedy.py`): Beta(1,1) posterior on the support so `H(Y|s)` is non-zero on a pure support, plus EVOI stopping (`stop when max_j E[Δutility] < λ·c_j`), and it should return the full IG vector as the P3-1 explainability hook. **Do not modify `GreedyIGPolicy`** — its near-optimality result is the project's strongest empirical claim, and adding an arm lets us measure how much of that claim depends on label circularity.
+5. **P1-g — promote the saturation finding.** The `V* = 1.000000` / pure-support result belongs in `diagnosisReady.md` and on the benchmark report's front page, and it reframes the framing of RQ2, H1 and AB-7. Polish becomes the load-bearing experiment.
+6. **V-1:** Human obtains licence-clear copy of `Toddler Autism dataset July 2018.csv` and places it at `data/raw/Q-CHAT NZ/`. Then run the `_load_nz_toddler_csv` provenance path (`V1_NZ_DATASET_RESOLUTION.md §6`).
+7. **V-2:** Human executes the 12 PRISMA queries; agent assists with dedup / inclusion checks.
+8. **V-4 / V-7:** Freeze MDE / comparison family; supervisor freezes the Polish denominator. Polish stays sealed until both.
+9. **V-9 (IRB)** and **V-10 (controlled access):** not started, longest lead time of anything remaining, and they cost nothing to begin now.
+10. After V-2, replace the "preliminary" tag on Step 3 artifacts with the supervisor-signed status.
+
+### Known open items (deliberately not fixed — recorded so they are not lost)
+
+| # | Issue | Why deferred |
+|---|---|---|
+| 1 | **Two disjoint beliefs.** `p_hat` (neural, calibrated) is what the UI shows and the reward uses; `p_emp` (empirical support mean) drives all question selection. They disagree by up to 0.33 absolute. | Design limitation, but it undermines every explanation the demo can give. Address before P3. |
+| 2 | **Support collapse.** 70.4% of reachable states have `p_emp ∈ {0,1}`, so `H(Y|s) = 0` and every item's IG is exactly 0; `greedy.py:74` then silently falls back to the lowest legal index. Median support is 3–5 records by depth 8. | Root cause is the circular label plus small N. Needs the Beta prior (item 5). |
+| 3 | **Greedy cannot stop.** `GreedyIGPolicy` strips `STOP` from the legal set, so it spends the full budget at every λ. At λ ≥ 0.005 the exact − greedy cost-utility gap is **entirely acquisition cost**. | Preserved on purpose — see item 5. |
+| 4 | `src/audits/leakage.py` — `record_fit` is never called from production code, so the §16.2 "blocking" audit records nothing. **It did not detect the P0-9 split leak.** | Now demonstrated to be a real gap, not a theoretical one. |
+| 5 | `src/ablation/runner.py` is a string table; `ablation_report` is called from nowhere, so none of the seven §20 ablations has run. AB-3 is blocked by V-6. | Needs the λ sign-off. |
+| 6 | `configs/config.yaml` is never parsed by any code — no `yaml.safe_load`, no OmegaConf, no hydra. Every setting is duplicated as a literal. | Tech debt; it is what let the P0-6-style drift recur. |
+| 7 | `src/data/schema.py` validation and `dedupe.py` never invoked. `dedupe._record_hash` includes `label`, so a cross-source duplicate with a *disagreeing* label is not flagged. | Low urgency. |
+| 8 | `tests/test_trace_belief_update.py:27` — the sequential-consistency assertion is commented out and replaced with `pass`. | Cheap to close. |
+| 9 | `src/explain/shap_baseline.py` is **not SHAP**: `import shap` sits in `try:`/`pass` and the value is discarded; the attribution is a single-flip delta, which is not additive. | Explainability honesty; P3. |
+| 10 | `scripts/demo_live.py` has zero test coverage. | P4. |
+| 11 | `BUDGET = 6` duplicated in `configs/config.yaml:6`, `demo_app.py:47`, `demo_static/index.html:187`; `Session._legal()` never offers STOP so the demo cannot stop early; the UI says "of 10 questions" while the budget is 6. | Demo/UX; P4. |
+| 12 | Isotonic calibration moves ECE the wrong way on a broad uniform state sample (0.0487 → 0.0729) while improving it along the B=6 episode path. The demo uses Platt for this reason. | Open, not resolved. |
 
 ## Important Decisions
 - **NZ 6075 pooled file retained unchanged; NOT used for training** — HUMAN ACTION REQUIRED path enforced in `load_nz()`. Even after V-1, the 6,075-row file stays untouched.
@@ -229,25 +387,33 @@ The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour t
 - `configs/config.yaml` — unchanged
 - `requirements.txt` — unchanged
 
-## Tests Last Run (2026-10-01)
+## Tests Last Run (2026-10-01, after the fourth pass)
 
 ```
-$ .venv/bin/python -m pytest tests -q
-........................................................................ [ 91%]
-.......                                                                  [100%]
-79 passed in 3.29s
+$ .venv-win/Scripts/python -m pytest tests -q
+........................................................................ [ 48%]
+........................................................................ [ 96%]
+......                                                                   [100%]
+150 passed in 25.02s   (intermediate: after the fourth pass)
 ```
+
+Final state after the fifth pass: **187 passed, 0 skipped** — 13 new tests in
+`tests/test_step7_rl_diagnosis.py`.
 
 | Test class | Count | Status |
 |---|---:|---|
-| §21 core (state, budget, legal-actions, encoding, count, reward, predictor, exact, circularity, leakage, counterfactual, threshold-freeze, common-evaluator, trace, fixed-subset) | 26 | PASS |
+| Step-7 RL-collapse diagnosis (`tests/test_step7_rl_diagnosis.py`) | 13 | PASS |
+| Step-6 λ sweep + canonical split (`tests/test_step6_lambda_sweep.py`) | 31 | PASS |
+| P1-d baselines + predictor reproducibility (`tests/test_p1d_baselines.py`) | 23 | PASS |
+| RL training regressions (`tests/test_rl_training.py`) | 28 | PASS |
+| Step 5 benchmark contracts (`tests/test_step5_benchmark.py`) | 14 | PASS |
+| Demo behaviour audit regressions (`tests/test_demo_behavior_audit.py`) | 11 | PASS |
 | DP tractability sweep invariants | 10 | PASS |
+| §21 core (state, budget, legal-actions, encoding, count, reward, predictor, exact, circularity, leakage, counterfactual, threshold-freeze, common-evaluator, trace, fixed-subset) | 22 | PASS |
 | Step 3 artifact contracts | 4 | PASS |
 | V-2 no-claim rule + PRISMA template | 3 | PASS |
-| Demo behaviour audit regressions | 11 | PASS |
-| RL training regressions (`tests/test_rl_training.py`) | 13 | PASS (2026-10-01) |
-| Step 5 benchmark contracts (`tests/test_step5_benchmark.py`) | 12 | PASS (2026-10-01) |
-| **Total** | **79** | **PASS** |
+| Leakage audit | 3 | PASS |
+| **Total** | **163** | **PASS, 0 skipped** |
 
 **Correction to the record:** this file previously said "43 tests" and a "working tree modified" state; the 43 figure predated the 11 demo-behaviour tests added in commit `56a1e3d`. README's "54" was the correct pre-2026-10-01 count. 13 RL tests → 67, then 12 Step-5 tests → 79.
 

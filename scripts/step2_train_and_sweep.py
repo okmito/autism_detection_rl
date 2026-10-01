@@ -34,6 +34,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+
+# A Windows console defaults to cp1252, which cannot encode the lambda / arrow /
+# section-sign characters this script prints. Without this the script aborts
+# mid-run with UnicodeEncodeError instead of completing and writing its artifacts.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 os.chdir(REPO)
 
 import numpy as np
@@ -46,7 +55,7 @@ from src.models.masked_predictor import MaskedPredictor
 from src.solvers.exact_custom import ExactDP
 from src.env.state import reachable_state_count
 from sklearn.metrics import brier_score_loss, roc_auc_score, log_loss
-from sklearn.model_selection import StratifiedKFold
+from src.data.splits import stratified_split, split_fingerprint, SCHEME
 
 RESULTS = REPO / "results"
 RESULTS.mkdir(exist_ok=True)
@@ -66,20 +75,15 @@ def _git_sha() -> str:
 
 
 def _split(records, val_frac: float = 0.25, seed: int = 0):
-    """Deterministic stratified split into train/val/test (test = val_frac, val = val_frac from remainder)."""
-    rng = np.random.default_rng(seed)
-    y = np.array([r["label"] for r in records])
-    idx = np.arange(len(records))
-    skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=seed)
-    train_idx, test_idx = next(skf.split(idx, y))
-    # second split for val
-    train_idx, val_idx = next(
-        skf.split(train_idx, y[train_idx])
-    )
-    train = [records[i] for i in train_idx]
-    val = [records[i] for i in val_idx]
-    test = [records[i] for i in test_idx]
-    return train, val, test
+    """Canonical split — delegates to ``src.data.splits.stratified_split``.
+
+    ``val_frac`` is accepted for call-site compatibility and ignored: the
+    canonical scheme is fixed at 4-fold by spec §17/§19 so that every artifact
+    lands on the same partition. The local copy this replaces passed the relative
+    indices returned by the second ``skf.split(train_idx, ...)`` call straight
+    into ``records[i]``, so the "validation" set overlapped both train and test.
+    """
+    return stratified_split(records, seed=seed)
 
 
 def _terminal_probs(predictor: MaskedPredictor, records) -> tuple[np.ndarray, np.ndarray]:
@@ -129,7 +133,7 @@ def _train_one(name: str, records, hidden=(128, 64), epochs=20, lr=1e-3,
     train, val, test = _split(records, seed=seed)
 
     pred = MaskedPredictor(
-        n_items=10, hidden=list(hidden), calibration="isotonic"
+        n_items=10, hidden=list(hidden), calibration="isotonic", seed=seed
     )
     pred.fit(train, epochs=epochs, lr=lr, batch_size=batch_size, seed=seed)
     pred.fit_calibrator(val, method="isotonic")
@@ -172,6 +176,10 @@ def _train_one(name: str, records, hidden=(128, 64), epochs=20, lr=1e-3,
         "val_brier": brier_val,
         "lambda": 0.0,
         "calibration": "isotonic",
+        "predictor_version": MaskedPredictor.VERSION,
+        "masks_per_record": pred.masks_per_record,
+        "split_scheme": SCHEME,
+        "split_fingerprint": split_fingerprint(train, val, test),
         "config": str(REPO / "configs" / "config.yaml"),
         "git_sha": _git_sha(),
     }

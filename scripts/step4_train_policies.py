@@ -38,7 +38,18 @@ import torch
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+# A Windows console defaults to cp1252, which cannot encode the arrows and
+# dashes used in this script's progress output. Without this the script raised
+# UnicodeEncodeError on its final print *after* every artifact had already been
+# written, so it exited non-zero and looked like it had failed. Set once, here.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 from src.data.ingest import load_dataset
+from src.data.splits import stratified_split, split_fingerprint, SCHEME
 from src.env.environment import STOP, run_episode
 from src.env.state import get_legal_items, init_state, update_state
 from src.models.masked_predictor import MaskedPredictor
@@ -61,53 +72,100 @@ def git_sha() -> str:
 
 
 def split_records(records: List[Dict[str, Any]], seed: int = 0):
-    """Stratified 60/20/20 train/val/test split — mirrors Step 2/3."""
-    from sklearn.model_selection import train_test_split
-    labels = np.array([r["label"] for r in records])
-    idx = np.arange(len(records))
-    tr, tmp = train_test_split(idx, test_size=0.4, random_state=seed, stratify=labels)
-    va, te = train_test_split(tmp, test_size=0.5, random_state=seed, stratify=labels[tmp])
-    pick = lambda ix: [records[i] for i in ix]
-    return pick(tr), pick(va), pick(te)
+    """Canonical stratified train/val/test split — shared with every other script.
+
+    This previously used a local 60/20/20 ``train_test_split`` (303/101/102 on
+    Saudi) while step2/step3/step5 and both demos used the 4-fold scheme
+    (284/95/127), so the policies trained here saw a different record set from
+    every artifact they were later compared against. Spec §17 requires identical
+    splits across runnable baselines. ``seed`` is retained for call compatibility.
+    """
+    return stratified_split(records, seed=seed)
 
 
 # ---------------------------------------------------------------------------
 # Rollout collection
 # ---------------------------------------------------------------------------
 
-def collect_episode(record, budget, b_min, policy, predictor, buf, n_items,
-                    lambda_cost, tau, epsilon=0.0, stochastic=False):
-    """Run one episode, recording transitions with per-state legal-action sets.
+def _legal_for(state, asked, b_min):
+    """Legal action set for ``state``, mirroring the §10 rule in ``run_episode``.
 
-    The legal set stored on each transition is the set the bootstrap target must
-    be masked to — dropping it is what made the original DQN target optimisable
-    toward illegal actions.
+    ``STOP`` is legal once ``asked >= b_min``, and is forced into the set when
+    no unasked item remains.
+    """
+    legal_items = get_legal_items(state)
+    stop_legal = (asked >= b_min) or (not legal_items)
+    return list(legal_items) + ([STOP] if stop_legal else [])
+
+
+def collect_episode(record, budget, b_min, policy, predictor, buf, n_items,
+                    lambda_cost, tau, epsilon=0.0, stochastic=False, gamma=None):
+    """Run one episode and store complete transitions in ``buf``.
+
+    Returns ``(terminal_reward, n_items_asked)``.
+
+    Transition bookkeeping
+    ----------------------
+    Three defects made the RL training a no-op before 2026-10-01. All three are
+    fixed here and regression-tested in ``tests/test_rl_training.py``:
+
+    1. **The terminal reward was discarded.** Intermediate transitions were
+       stored with ``r = 0.0`` and the terminal transition was written with
+       ``r = 0.0`` as well, so DQN optimised ``y = gamma * max_a Q(s', a)`` with
+       no reward anywhere and PPO's advantage was identically zero. The §10
+       utility is now attached to the terminal transition.
+    2. **The legal set was off by one.** Each transition stored the legal set of
+       the state it *left* rather than the state it *entered*, so the bootstrap
+       mask still marked already-asked items legal. The set stored is now the
+       legal set of ``s_next``.
+    3. **Terminal transitions were never committed.** ``ReplayBuffer.add_step``
+       appends to an internal ``_pending`` list that only
+       ``ReplayBuffer.end_episode`` drains; nothing called it, so every STOP
+       transition was silently dropped and ``_pending`` grew without bound.
+       Transitions are now built explicitly and written with ``add``.
+
+    ``gamma`` selects the reward semantics, which differ by algorithm because
+    §11.1 emits only a terminal reward:
+
+    * ``gamma=None`` (default, used by DQN) stores the **immediate** reward, so
+      the Q-target ``r + gamma * max_a Q(s', a)`` bootstraps correctly.
+    * ``gamma=<float>`` (used by PPO) stores the **discounted return-to-go**,
+      ``G_t = r_t + gamma * G_{t+1}`` with ``G_T = r_T``. Storing the immediate
+      reward for PPO would leave the advantage zero at every step except STOP,
+      which trains the policy to stop immediately; returns-to-go propagate the
+      terminal utility back to the decisions that produced it.
     """
     state = init_state(record)
     state["questions_remaining"] = budget
     state["budget"] = budget
     remaining = budget
     raw = record["item_responses"]
+    from src.env.costs import get_costs
+    costs = get_costs(n_items, mode="uniform")
 
-    steps: List[Dict[str, Any]] = []
+    transitions: List[Any] = []
+    asked: List[int] = []
+
+    def _finish(terminal_state) -> Any:
+        p_hat = float(np.clip(predictor(terminal_state), 0.0, 1.0))
+        y = int(record["label"])
+        asked_cost = sum(float(costs[j]) for j in asked)
+        R = (1 - (p_hat - y) ** 2) - lambda_cost * asked_cost
+        transitions.append((terminal_state, STOP, R, None, True, None))
+        batch = _to_returns(transitions, gamma) if gamma is not None else transitions
+        for t in batch:
+            buf.add(*t)
+        return R
+
     while True:
         legal_items = get_legal_items(state)
-        stop_legal = len(steps) >= b_min or not legal_items
+        stop_legal = (len(asked) >= b_min) or (not legal_items)
         legal = list(legal_items) + ([STOP] if stop_legal else [])
 
-        if remaining == 0 or not legal:
-            # Episode terminates here. Terminal reward comes from the §10
-            # utility of stopping at this state.
-            p_hat = float(np.clip(predictor(state), 0.0, 1.0))
-            y = int(record["label"])
-            from src.env.costs import get_costs
-            costs = get_costs(n_items, mode="uniform")
-            asked = [s["a"] for s in steps]
-            asked_cost = sum(costs[j] for j in asked if j != STOP)
-            R = (1 - (p_hat - y) ** 2) - lambda_cost * asked_cost
-            for st in steps:
-                buf.add(st["s"], st["a"], st["r"], st["s_next"], False, st["legal"])
-            return R, len(steps)
+        # Terminal state reached without the policy choosing to stop: the budget
+        # ran out, or every item has been observed.
+        if remaining == 0 or not legal_items:
+            return _finish(state), len(asked)
 
         if epsilon > 0 and hasattr(policy, "select_action"):
             action = policy.select_action(state, legal, epsilon=epsilon)
@@ -117,15 +175,12 @@ def collect_episode(record, budget, b_min, policy, predictor, buf, n_items,
             action = policy(state, legal)
 
         if action == STOP:
-            p_hat = float(np.clip(predictor(state), 0.0, 1.0))
-            y = int(record["label"])
-            from src.env.costs import get_costs
-            costs = get_costs(n_items, mode="uniform")
-            asked = [s["a"] for s in steps if s["a"] != STOP]
-            asked_cost = sum(costs[j] for j in asked)
-            R = (1 - (p_hat - y) ** 2) - lambda_cost * asked_cost
-            buf.add_step(state, action, 0.0, None, True, legal)
-            return R, len(steps)
+            return _finish(state), len(asked)
+
+        if action not in legal_items:
+            raise ValueError(
+                f"Illegal action {action} in collect_episode; legal={legal_items}"
+            )
 
         v_raw = raw[action]
         if np.isnan(v_raw):
@@ -134,10 +189,31 @@ def collect_episode(record, budget, b_min, policy, predictor, buf, n_items,
         nxt = update_state(state, action, v, remaining - 1)
         nxt["questions_remaining"] = remaining - 1
         nxt["budget"] = budget
-        steps.append({"s": state, "a": action, "r": 0.0,
-                      "s_next": nxt, "legal": legal})
+        asked.append(action)
+        # Legal set of the state this transition ENTERS, which is the set the
+        # bootstrap target must be masked to.
+        transitions.append((state, action, 0.0, nxt, False,
+                            _legal_for(nxt, len(asked), b_min)))
         state = nxt
         remaining -= 1
+
+    # Unreachable: the loop only exits through a terminal return.
+    raise RuntimeError("collect_episode fell through the episode loop")
+
+
+def _to_returns(transitions: List[Any], gamma: float) -> List[Any]:
+    """Replace each transition's immediate reward with its discounted return.
+
+    Backward sweep, terminal reward last, matching §11.1's terminal-only
+    emission.
+    """
+    out = list(transitions)
+    g = 0.0
+    for i in range(len(out) - 1, -1, -1):
+        s, a, r, s_next, done, legal = out[i]
+        g = float(r) + (0.0 if done else gamma * g)
+        out[i] = (s, a, g, s_next, done, legal)
+    return out
 
 
 def train_dqn(train_records, predictor, n_items, budget, episodes, seed,
@@ -146,7 +222,7 @@ def train_dqn(train_records, predictor, n_items, budget, episodes, seed,
     torch.manual_seed(seed)
     np.random.seed(seed)
     buf = ReplayBuffer(capacity=100_000, seed=seed)
-    pol = DQNPolicy(n_items=n_items, lr=lr)
+    pol = DQNPolicy(n_items=n_items, lr=lr, seed=seed)
     losses: List[float] = []
     total_steps = 0
     t0 = time.time()
@@ -176,7 +252,7 @@ def train_dqn(train_records, predictor, n_items, budget, episodes, seed,
 
 
 def train_ppo(train_records, predictor, n_items, budget, episodes, seed,
-              lr=3e-4, epochs=4, lambda_cost=0.0, tau=0.5):
+              lr=3e-4, epochs=4, lambda_cost=0.0, tau=0.5, gamma=0.99):
     torch.manual_seed(seed)
     np.random.seed(seed)
     pol = PPOPolicy(n_items=n_items)
@@ -187,25 +263,21 @@ def train_ppo(train_records, predictor, n_items, budget, episodes, seed,
         buf = ReplayBuffer(capacity=10_000, seed=seed + ep)
         for k in range(8):  # batch of trajectories per update
             rec = train_records[(ep * 8 + k) % len(train_records)]
+            # gamma is passed so collect_episode stores discounted returns-to-go
+            # rather than the sparse terminal reward; see its docstring.
             collect_episode(rec, budget, 0, pol, predictor.predict_state, buf,
-                            n_items, lambda_cost, tau, stochastic=True)
+                            n_items, lambda_cost, tau, stochastic=True,
+                            gamma=gamma)
         data = buf.all()
         if not data:
             continue
         old_logp = []
         for s, a, r, s_next, done, legal in data:
-            # log-prob under the CURRENT policy, before the update
-            with torch.no_grad():
-                logits = pol.actor(pol._encode(s)).cpu().numpy()[0]
-            import numpy as _np
-            masked = _np.full(n_items + 1, float("-inf"))
-            for aa in legal:
-                masked[n_items if aa == STOP else aa] = logits[n_items if aa == STOP else aa]
-            m = _np.max(masked[_np.isfinite(masked)])
-            e = _np.exp(masked - m); e[~_np.isfinite(masked)] = 0
-            p = e / e.sum()
-            idx = n_items if a == STOP else a
-            old_logp.append(float(_np.log(max(p[idx], 1e-12))))
+            # log-prob of the taken action under the CURRENT policy, before the
+            # update. Legal-action masking is delegated to the policy so every
+            # script derives the ratio identically.
+            lp = pol.masked_log_probs(s, legal)
+            old_logp.append(float(lp[n_items if a == STOP else a]))
         for _ in range(epochs):
             stats.append(pol.train_step(data, old_logp=old_logp))
 
@@ -225,7 +297,11 @@ def train_ppo(train_records, predictor, n_items, budget, episodes, seed,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="saudi")
-    ap.add_argument("--episodes", type=int, default=200)
+    ap.add_argument("--episodes", type=int, default=2000,
+                    help="training episodes; 2000 is the budget at which the "
+                         "bootstrap objective reaches plateaued behaviour "
+                         "(scripts/step7_rl_diagnosis.py). 400 was used before "
+                         "that sweep and produced an undertrained policy.")
     ap.add_argument("--budget", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--algos", default="dqn,ppo")
@@ -241,7 +317,7 @@ def main():
     print(f"{args.dataset}: {len(records)} records, n_items={n_items}, "
           f"train={len(train_recs)} val={len(val_recs)} test={len(test_recs)}")
 
-    predictor = MaskedPredictor(n_items=n_items)
+    predictor = MaskedPredictor(n_items=n_items, seed=args.seed)
     predictor.fit(train_recs, epochs=20, lr=1e-3, batch_size=32, seed=args.seed)
     predictor.fit_calibrator(val_recs)
     print("predictor trained + calibrated")
@@ -277,6 +353,9 @@ def main():
         "seed": args.seed,
         "splits": {"train": len(train_recs), "val": len(val_recs),
                    "test": len(test_recs)},
+        "predictor_version": predictor.version,
+        "split_scheme": SCHEME,
+        "split_fingerprint": split_fingerprint(train_recs, val_recs, test_recs),
         "results": out,
         "git_sha": git_sha(),
         "python": platform.python_version(),

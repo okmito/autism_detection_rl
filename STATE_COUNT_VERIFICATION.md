@@ -99,7 +99,7 @@ python3 scripts/step5_policy_benchmark.py --episodes 400 --budgets 1,2,3,4,5,6
 → results/step5_policy_benchmark_saudi.{json,csv}
    (also solves ExactDP per budget; per-B state counts in `exact_dp` log lines)
 python3 -m pytest tests -q
-→ 79 passed
+→ 187 passed
 ```
 
 ## 2026-10-01 re-verification

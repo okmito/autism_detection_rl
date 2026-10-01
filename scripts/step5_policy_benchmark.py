@@ -51,22 +51,33 @@ from typing import Any, Dict, List
 
 import numpy as np
 import torch
-from sklearn.model_selection import StratifiedKFold
-
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 RESULTS = REPO / "results"
 
+# See the note in step4_train_policies.py: a cp1252 console raised
+# UnicodeEncodeError on the final print, after the artifacts were written.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 from src.data.ingest import load_dataset
+from src.data.splits import stratified_split, split_fingerprint, SCHEME
 from src.env.environment import STOP, run_episode
 from src.eval.metrics import compute_metrics, acquisition_burden
 from src.models.masked_predictor import MaskedPredictor
 from src.policies.dqn import DQNPolicy
 from src.policies.greedy import GreedyIGPolicy
+from src.policies.beta_greedy import BetaGreedyPolicy
+from src.policies.irt_cat import IRTCATPolicy
 from src.policies.ppo import PPOPolicy
 from src.policies.random_policy import RandomPolicy
+from src.policies.static_fixed import ExactFixedSubsetPolicy
+from src.policies.static_rfe import StaticRFEPolicy
 from src.solvers.exact_custom import ExactDP
-from scripts.step4_train_policies import collect_episode, split_records
+from scripts.step4_train_policies import collect_episode
 from src.policies.replay import ReplayBuffer
 
 TAG = ("preliminary — RL policies benchmarked 2026-10-01 (Step 5); "
@@ -93,13 +104,13 @@ def _git_sha() -> str:
 
 
 def split(records, seed=0):
-    """4-fold stratified train/val/test — identical to Step 3 so results align."""
-    y = np.array([r["label"] for r in records])
-    skf = StratifiedKFold(n_splits=4, shuffle=True, random_state=seed)
-    tr, te = next(skf.split(np.arange(len(records)), y))
-    tr, va = next(skf.split(tr, y[tr]))
-    return ([records[i] for i in tr], [records[i] for i in va],
-            [records[i] for i in te])
+    """Canonical 4-fold stratified split — shared with step2/step3/the demo.
+
+    Kept as a named wrapper because this module and ``scripts/demo_live.py``
+    import it. The local copy it replaces overlapped validation with training and
+    test; see ``src/data/splits.py``.
+    """
+    return stratified_split(records, seed=seed)
 
 
 def train_dqn(train_recs, predictor, n_items, budget, episodes, seed):
@@ -107,7 +118,7 @@ def train_dqn(train_recs, predictor, n_items, budget, episodes, seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
     buf = ReplayBuffer(capacity=100_000, seed=seed)
-    pol = DQNPolicy(n_items=n_items)
+    pol = DQNPolicy(n_items=n_items, seed=seed)
     losses = []
     for ep in range(episodes):
         frac = ep / max(episodes - 1, 1)
@@ -134,24 +145,16 @@ def train_ppo(train_recs, predictor, n_items, budget, episodes, seed):
         buf = ReplayBuffer(capacity=10_000, seed=seed + ep)
         for k in range(8):
             rec = train_recs[(ep * 8 + k) % len(train_recs)]
+            # gamma -> discounted returns-to-go; see collect_episode docstring.
             collect_episode(rec, budget, 0, pol, predictor.predict_state, buf,
-                            n_items, 0.0, 0.5, stochastic=True)
+                            n_items, 0.0, 0.5, stochastic=True, gamma=0.99)
         data = buf.all()
         if not data:
             continue
         old_logp = []
         for s, a, r, s_next, done, legal in data:
-            with torch.no_grad():
-                logits = pol.actor(pol._encode(s)).cpu().numpy()[0]
-            masked = np.full(n_items + 1, float("-inf"))
-            for aa in legal:
-                j = n_items if aa == STOP else aa
-                masked[j] = logits[j]
-            m = np.max(masked[np.isfinite(masked)])
-            e = np.exp(masked - m); e[~np.isfinite(masked)] = 0
-            p = e / e.sum()
-            j = n_items if a == STOP else a
-            old_logp.append(float(np.log(max(p[j], 1e-12))))
+            lp = pol.masked_log_probs(s, legal)
+            old_logp.append(float(lp[n_items if a == STOP else a]))
         for _ in range(4):
             pol.train_step(data, old_logp=old_logp)
     return pol, {"n_updates": episodes}
@@ -200,7 +203,11 @@ def main() -> int:
     ap.add_argument("--budgets", default="1,2,3,4,5,6")
     ap.add_argument("--train-budget", type=int, default=6,
                     help="budget the RL policies are TRAINED at")
-    ap.add_argument("--episodes", type=int, default=400)
+    ap.add_argument("--episodes", type=int, default=2000,
+                    help="training episodes; 2000 is the budget at which the "
+                         "bootstrap objective reaches plateaued behaviour "
+                         "(scripts/step7_rl_diagnosis.py). 400 was used before "
+                         "that sweep and produced an undertrained policy.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--skip-exact", action="store_true")
@@ -218,7 +225,7 @@ def main() -> int:
           f"val={len(val)} test={len(test)} | n_items={n_items}")
 
     predictor = MaskedPredictor(n_items=n_items, hidden=[128, 64],
-                                calibration="isotonic")
+                                calibration="isotonic", seed=args.seed)
     predictor.fit(train, epochs=20, lr=1e-3, batch_size=32, seed=args.seed)
     predictor.fit_calibrator(val, method="isotonic")
     print("[predictor] trained + calibrated")
@@ -240,6 +247,21 @@ def main() -> int:
             "random": RandomPolicy(seed=args.seed),
             "dqn": dqn,
             "ppo": ppo,
+            # Spec §17 #4/#5/#8. These were written but never instantiated
+            # anywhere in the repository, so H1 ("adaptive beats the exact best
+            # fixed subset") had no runnable comparator. `exact_fixed_subset` is
+            # the comparator H1 is written against; `static_rfe` is the cheaper
+            # feature-selection variant; `irt_cat` is the generic CAT baseline.
+            "exact_fixed_subset": ExactFixedSubsetPolicy(
+                train, n_items=n_items, budget=B, lambda_cost=0.0),
+            "static_rfe": StaticRFEPolicy(train, n_items=n_items, budget=B),
+            "irt_cat": IRTCATPolicy(train, n_items=n_items, seed=args.seed),
+            # P1-f: Beta(1,1)-smoothed posterior with EVOI selection. Added as a
+            # NEW arm; `GreedyIGPolicy` is untouched. At lambda=0 it never stops
+            # early, so it is directly comparable to the other fixed-length arms
+            # here; its cost-utility behaviour is swept in step6_lambda_sweep.
+            "beta_greedy": BetaGreedyPolicy(
+                train, n_items=n_items, lambda_cost=0.0, select_by="evoi"),
         }
         if not args.skip_exact:
             try:
@@ -285,16 +307,29 @@ def main() -> int:
                     continue
                 v_star = sol["V_star"]
                 row = {"B": B, "V_star": round(v_star, 8)}
-                for name, pol in [("greedy", GreedyIGPolicy(train, n_items=n_items)),
-                                  ("random", RandomPolicy(seed=args.seed)),
-                                  ("dqn", dqn), ("ppo", ppo)]:
+                # Same policy set as the held-out table, so the gap columns and
+                # the per_budget rows cover identical arms.
+                gap_pols = [
+                    ("greedy", GreedyIGPolicy(train, n_items=n_items)),
+                    ("random", RandomPolicy(seed=args.seed)),
+                    ("dqn", dqn),
+                    ("ppo", ppo),
+                    ("exact_fixed_subset", ExactFixedSubsetPolicy(
+                        train, n_items=n_items, budget=B, lambda_cost=0.0)),
+                    ("static_rfe", StaticRFEPolicy(
+                        train, n_items=n_items, budget=B)),
+                    ("irt_cat", IRTCATPolicy(train, n_items=n_items,
+                                             seed=args.seed)),
+                    ("beta_greedy", BetaGreedyPolicy(
+                        train, n_items=n_items, lambda_cost=0.0, select_by="evoi")),
+                ]
+                for name, pol in gap_pols:
                     v_emp = dp.evaluate_policy(pol, train)
                     row[f"V_emp_{name}"] = round(v_emp, 8)
                     row[f"gap_{name}"] = round(v_star - v_emp, 8)
                 gaps.append(row)
                 gap_str = "  ".join(
-                    f"{nm}={v_star - row[f'V_emp_{nm}']:+.6f}"
-                    for nm in ["greedy", "random", "dqn", "ppo"]
+                    f"{nm}={row['gap_' + nm]:+.6f}" for nm, _ in gap_pols
                 )
                 print(f"    B={B} V*={v_star:.6f}  {gap_str}")
             except Exception as e:
@@ -314,6 +349,9 @@ def main() -> int:
         "budgets_evaluated": budgets,
         "seed": args.seed,
         "splits": {"train": len(train), "val": len(val), "test": len(test)},
+        "predictor_version": predictor.version,
+        "split_scheme": SCHEME,
+        "split_fingerprint": split_fingerprint(train, val, test),
         "training": {"dqn": dqn_stats, "ppo": ppo_stats},
         "per_budget": rows,
         "optimality_gap": gaps,

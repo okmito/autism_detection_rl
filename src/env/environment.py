@@ -40,7 +40,14 @@ def run_episode(
         if stop_legal:
             legal.append(STOP)
 
-        if questions_remaining == 0:
+        # A STOP is *voluntary* only when the policy was given the choice. With
+        # b_min == 0 `stop_legal` is unconditionally True, so a previous revision
+        # could never distinguish the two cases: `"budget_exhausted"` was
+        # unreachable and every episode was labelled `"policy_stop"`. That made
+        # the `stopped_early_frac` metric in step5 a constant 1.0 for all
+        # policies, including random. Record the real cause of termination.
+        budget_exhausted = (questions_remaining == 0) or (not legal_items)
+        if budget_exhausted:
             action = STOP
         else:
             # policy receives state dict and legal list
@@ -53,7 +60,10 @@ def run_episode(
             asked_cost = sum(costs[j] for j in items_asked)
             R = (1 - (p_hat - y) ** 2) - lambda_cost * asked_cost
             decision = "REFER" if p_hat >= tau else "NO_REFERRAL_INDICATED"
-            stop_reason = "policy_stop" if stop_legal else "budget_exhausted"
+            if budget_exhausted:
+                stop_reason = "budget_exhausted"
+            else:
+                stop_reason = "policy_stop"
             # counterfactual placeholder — filled by caller if needed
             return {
                 "decision": decision,

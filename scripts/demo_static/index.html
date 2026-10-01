@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Adaptive Screening — RL Demo</title>
+    <title>Adaptive Screening — Policy Demo</title>
+    <link rel="icon" href="data:,">
 <style>
 :root{
   --bg:#0b1020; --panel:#121a33; --panel2:#0e1529; --line:#23304f;
@@ -67,10 +68,10 @@ h1{font-size:22px;font-weight:650;letter-spacing:.2px}
 .d-nore{background:#2ee6a818;color:var(--good);border:1px solid #2ee6a855}
 .meta{text-align:center;color:var(--mut);font-size:12px;margin-top:10px;line-height:1.7}
 .trace{margin-top:6px}
-.trow{display:grid;grid-template-columns:34px 40px 34px 1fr 1fr;gap:8px;align-items:center;
+.trow{display:grid;grid-template-columns:30px 36px 30px 1fr 1fr 96px;gap:8px;align-items:center;
   padding:8px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:7px;background:#0b1226;font-size:12.5px}
 .trow .up{color:var(--bad)} .trow .down{color:var(--good)} .trow .flat{color:var(--mut)}
-.trace-head{display:grid;grid-template-columns:34px 40px 34px 1fr 1fr;gap:8px;
+.trace-head{display:grid;grid-template-columns:30px 36px 30px 1fr 1fr 96px;gap:8px;
   font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px;
   padding:0 10px 6px}
 .arrow{color:var(--mut)}
@@ -94,6 +95,22 @@ footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-hei
 .progress i{display:block;height:100%;width:0;border-radius:99px;
   background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .5s}
 .hidden{display:none}
+.warnbox{margin-top:12px;border-left:3px solid var(--warn);background:#ffb4540f;
+  border-radius:0 10px 10px 0;padding:11px 13px;font-size:12.5px;line-height:1.6;color:#dfe5f5}
+.warnbox b{color:var(--warn)}
+.warnbox code{background:#0b1226;padding:1px 5px;border-radius:4px;font-size:11.5px}
+.selbox{margin-top:12px;border-left:3px solid var(--acc);background:#5b8cff0f;
+  border-radius:0 10px 10px 0;padding:11px 13px;font-size:12.5px;line-height:1.6}
+.selbox b{color:var(--acc)}
+.selbox.degenerate{border-left-color:var(--warn);background:#ffb4540f}
+.selbox.degenerate b{color:var(--warn)}
+.selbox .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0 4px}
+.selbox .kv .box{background:#0b1226;padding:7px 9px}
+.selbox .kv .v{font-size:14px}
+.pill{display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--line);color:var(--mut);margin:0 5px 5px 0}
+.pill.warn{border-color:#ffb45466;color:var(--warn);background:#ffb45414}
+.pill.good{border-color:#2ee6a866;color:var(--good);background:#2ee6a814}
 #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
   background:#2a1636;border:1px solid var(--bad);color:var(--txt);padding:10px 18px;
   border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:9}
@@ -105,8 +122,8 @@ footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-hei
   <header>
     <div class="logo">🧩</div>
     <div>
-      <h1>Adaptive Autism Screening — RL Question Selection</h1>
-      <div class="sub">Reinforcement-learning policy picks which Q-CHAT-10 questions to ask · budget-constrained · research prototype</div>
+      <h1>Adaptive Autism Screening — Question Selection</h1>
+      <div class="sub">A rule-based information-gain policy picks which Q-CHAT-10 questions to ask · budget-constrained · research prototype</div>
     </div>
     <div class="badge">⚠ Screening research demo — NOT a diagnosis</div>
   </header>
@@ -124,6 +141,18 @@ footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-hei
           <button id="p-greedy" class="on" onclick="setPolicy('greedy')">Policy: Greedy (deterministic)</button>
           <button id="p-random" onclick="setPolicy('random')">Policy: Random (new draw each run)</button>
         </div>
+        <div class="meta" style="margin:-8px 0 14px;text-align:left">
+          No reinforcement-learning policy is served here. The RL arms (DQN, PPO) are benchmarked
+          offline in <code>scripts/step5_policy_benchmark.py</code>; this demo runs the
+          information-gain and random baselines so the selection logic is inspectable.
+        </div>
+        <div class="warnbox" id="randNote" style="display:none;margin:-6px 0 14px">
+          <b>Why did Random ask fewer questions?</b> The random baseline draws uniformly from the
+          legal actions, which include “stop”, so it can end the episode early — including before
+          asking anything at all (~9% of episodes ask zero questions, and only ~45% reach the full
+          budget of 6). This is a property of the baseline as specified, not an adaptive decision,
+          so its question count is <b>not</b> comparable with the greedy policy's.
+        </div>
         <div class="btn-row">
           <button class="btn" id="startBtn" onclick="start()">▶ Start episode</button>
           <button class="btn ghost" id="stopBtn" onclick="stopEarly()" disabled>⏹ Stop &amp; predict</button>
@@ -133,13 +162,25 @@ footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-hei
             <b>How it works</b>
             <ul>
               <li>The policy chooses <b>which question</b> to ask next (max 6 of 10).</li>
-              <li><b>Greedy</b> is deterministic: it always picks the question with the highest
-                  expected information gain — the same answers give the same sequence by design.</li>
-              <li><b>Random</b> draws a fresh random sequence each episode — a baseline for comparison.</li>
+              <li><b>Greedy</b> is deterministic: it scores every unasked question by expected
+                  information gain about the label, given the answers so far, and takes the best —
+                  the same answers give the same sequence by design.</li>
+              <li><b>Random</b> draws a fresh random action each step, including “stop”, so it can
+                  finish early — a baseline for comparison, not an adaptive policy.</li>
               <li>After each answer the model updates the risk estimate.</li>
               <li>“Stop &amp; predict” ends early and gives the recommendation.</li>
               <li>Auto mode replays a full episode from the held-out test set.</li>
             </ul>
+            <div class="warnbox">
+              <b>Why does it often ask A1, A2, A3… in order?</b>
+              On this dataset the labels are a deterministic sum-threshold over the questions
+              themselves, so after a few answers <i>every training record still consistent with
+              your answers carries the same label</i>. The support is then <b>label-pure</b>,
+              expected information gain is exactly <b>0 for every remaining question</b>, and
+              <code>argmax</code> has nothing to choose between — the policy falls back to the
+              lowest-numbered unasked item. This is measured, not a bug in the demo, and it is
+              shown per step in the <b>Selection</b> panel below.
+            </div>
           </div>
       </div>
 
@@ -154,6 +195,12 @@ footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-hei
           <div class="box"><div class="k">Greedy vs random (B=6)</div><div class="v" id="s-b6" style="font-size:12.5px">—</div></div>
         </div>
         <div class="meta" id="s-note"></div>
+        <div class="warnbox" id="s-h1">
+          <b>H1 (adaptive vs the exact best fixed subset):</b> <span>—</span>
+        </div>
+        <div class="warnbox" id="s-v6">
+          <b>V-6 (question-cost threshold):</b> <span>—</span>
+        </div>
       </div>
     </div>
 
@@ -166,6 +213,7 @@ footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-hei
         </div>
         <div class="meta" style="margin-top:10px">risk = calibrated P(ASD traits) from the neural
         predictor given the answers so far · decision = REFER if risk ≥ τ = 0.5 · research prototype, not diagnosis</div>
+        <div id="selPanel"></div>
       </div>
 
       <div class="card" style="margin-top:18px" id="traceCard">
@@ -177,7 +225,8 @@ footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-hei
 
   <footer>
     Screening / referral-recommendation research prototype · not clinically validated · not a diagnostic tool<br>
-    Datasets: Saudi toddlers n=506 (labels are questionnaire-derived — shown in the audit panel) · threshold τ = 0.5 · budget B = 6
+    Datasets: Saudi toddlers n=506 (labels are questionnaire-derived — shown in the audit panel) · threshold τ = 0.5 · budget B = 6<br>
+    No question-cost threshold is in force: the V-6 gate is unsigned, so stopping here is manual and the episode always runs the full budget unless you stop it.
   </footer>
 </div>
 <div id="toast"></div>
@@ -189,7 +238,12 @@ const $=id=>document.getElementById(id);
 
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200);}
 function setMode(m){mode=m;$('m-int').classList.toggle('on',m==='interactive');$('m-auto').classList.toggle('on',m==='auto');}
-function setPolicy(p){policy=p;$('p-greedy').classList.toggle('on',p==='greedy');$('p-random').classList.toggle('on',p==='random');}
+function setPolicy(p){
+  policy=p;
+  $('p-greedy').classList.toggle('on',p==='greedy');
+  $('p-random').classList.toggle('on',p==='random');
+  $('randNote').style.display = p==='random' ? '' : 'none';
+}
 function busy(b,label){const s=$('startBtn');if(b){s.dataset.h=s.innerHTML;s.disabled=true;
   if(label)s.innerHTML='<span class="spin"></span> '+label;}
   else{s.disabled=false;s.innerHTML=s.dataset.h||'▶ Start episode';}}
@@ -199,6 +253,44 @@ async function api(path, body){
   const j=await r.json().catch(()=>({error:'bad response'}));
   if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
   return j;
+}
+
+function renderH1(o){
+  const h1=o&&o.h1;
+  if(!h1||!Object.keys(h1).length){$('s-h1').querySelector('span').textContent='run Step 5';return;}
+  const parts=Object.keys(h1).map(b=>{
+    const r=h1[b];
+    if(r.greedy==null||r.fixed==null) return `B${b} —`;
+    return `B${b} ${r.supported?'✓':'✗'}`;
+  });
+  const failed=Object.keys(h1).filter(b=>h1[b].supported===false);
+  $('s-h1').querySelector('span').innerHTML=
+    parts.join(' &nbsp;')+
+    (failed.length
+      ? `<br>✗ <b>not supported at B = ${failed.join(', ')}</b> — the exact best fixed subset has lower
+         held-out Brier than every adaptive arm (greedy, Beta-prior EVOI, DQN). A lower Brier is better,
+         so the fixed subset <i>wins</i> there.`
+      : `<br>✓ adaptive beats the exact best fixed subset at every measured budget.`);
+}
+
+function renderV6(o){
+  const v=o&&o.v6;
+  const el=$('s-v6').querySelector('span');
+  if(!v){el.textContent='no Step-6 artifact found';return;}
+  const bits=[];
+  bits.push('<b>NOT signed off.</b> No threshold is selected, so this demo has no cost-aware stopping rule.');
+  if(v.support_evoi_median!=null){
+    bits.push(`Measured best-question value on the test split: median
+      ${Number(v.support_evoi_median).toFixed(4)} (support posterior) vs
+      ${Number(v.predictor_evoi_median).toFixed(4)} (neural predictor) — same units, so a single λ
+      scale applies to both. An earlier claim that these were two orders of magnitude apart was
+      measured and withdrawn.`);
+  }
+  if(v.saturated_at_zero_lambda){
+    bits.push(`At λ = 0 the objective <b>saturates</b> (V* = 1.000000): the support becomes label-pure
+      after ~4 questions, so early stopping there measures the label rule, not interview sufficiency.`);
+  }
+  el.innerHTML=bits.join('<br>');
 }
 
 async function loadMeta(){
@@ -216,6 +308,7 @@ async function loadMeta(){
     $('s-b6').textContent=b&&b.policy_greedy_brier!=null
       ?`greedy ${Number(b.policy_greedy_brier).toFixed(3)} · random ${Number(b.policy_random_brier).toFixed(3)}`:'run Step 3';
     $('s-note').textContent=`train/val/test held-out split · class balance ${d.positive}/${d.negative} · τ=${m.tau} · B=${m.budget}`;
+    renderH1(o); renderV6(o);
   }catch(e){/* panel stays at '—' */}
 }
 
@@ -236,6 +329,65 @@ function gaugeHTML(p,dec,extra){
   <div class="meta">${extra}</div>`;
 }
 
+function selHTML(sel,label){
+  if(!sel||sel.applicable===false)
+    return `<div class="selbox"><b>Selection</b> (${label}): the random baseline has no
+      criterion to inspect — it draws uniformly from the unasked items.</div>`;
+  if(sel.support_size===null)
+    return `<div class="selbox"><b>Selection</b> (${label}): no legal item left to score.</div>`;
+  const vac=sel.criterion_vacuous;
+  const pills=[];
+  pills.push(`<span class="pill ${sel.support_is_pure?'warn':'good'}">support ${sel.support_is_pure?'label-pure':'label-mixed'}</span>`);
+  if(sel.posterior!=null)
+    pills.push(`<span class="pill">label rate in support ${Number(sel.posterior).toFixed(3)}</span>`);
+  if(sel.ig_spread!=null)
+    pills.push(`<span class="pill ${vac?'warn':''}">IG spread ${Number(sel.ig_spread).toFixed(6)}</span>`);
+  if(sel.tie_at_max!=null&&sel.n_legal)
+    pills.push(vac
+      ? `<span class="pill warn">all ${sel.n_legal} items score identically</span>`
+      : `<span class="pill">${sel.tie_at_max===1?'unique best item':sel.tie_at_max+' of '+sel.n_legal+' tied at the top'}</span>`);
+  const why=vac
+    ? `<b>Every legal item scores exactly 0 information gain</b>, so <code>argmax</code> has nothing
+       to choose between and the policy falls back to the lowest-numbered unasked item. This is a
+       <b>vacuous criterion, not a genuine tie</b>: the support is
+       ${sel.support_is_pure?'<b>label-pure</b>':'degenerate'} — all
+       ${sel.n_pos} of ${sel.support_size} training records still consistent with your answers are
+       positive, so the label is already pinned down and no remaining question can add information.`
+    : `Information gain differs across legal items, so this pick is
+       <b>informative</b>${sel.tie_at_max>1?` — ${sel.tie_at_max} of ${sel.n_legal} items tie at the top`:''}.`;
+  return `<div class="selbox ${vac?'degenerate':''}">
+    <b>Selection</b> (${label}) ${pills.join('')}
+    <div style="margin-top:8px">${why}</div>
+    <div class="kv">
+      <div class="box"><div class="k">Support size</div><div class="v">${sel.support_size}</div></div>
+      <div class="box"><div class="k">Positives in support</div><div class="v">${sel.n_pos}</div></div>
+      <div class="box"><div class="k">IG spread</div><div class="v">${sel.ig_spread==null?'—':Number(sel.ig_spread).toFixed(6)}</div></div>
+    </div>
+  </div>`;
+}
+
+function setSel(sel,label){
+  $('selPanel').innerHTML = sel ? selHTML(sel,label) : '';
+}
+
+function selSummaryHTML(s){
+  if(!s||!s.steps_diagnosed) return '';
+  const v=s.steps_criterion_vacuous, p=s.steps_support_pure, n=s.steps_diagnosed;
+  const head=v>0
+    ? `<b>${v} of ${n}</b> selection steps had a <b>vacuous</b> criterion (IG identical across every
+       legal item), so the order shown above was partly the fallback rule rather than a ranking.`
+    : `All ${n} selection steps had a discriminating criterion.`;
+  return `<div class="selbox ${v>0?'degenerate':''}">
+    <b>Episode summary</b>
+    <div style="margin-top:6px">${head}</div>
+    <div class="kv">
+      <div class="box"><div class="k">Vacuous steps</div><div class="v">${v}/${n}</div></div>
+      <div class="box"><div class="k">Label-pure steps</div><div class="v">${p}/${n}</div></div>
+      <div class="box"><div class="k">Support at stop</div><div class="v">${s.support_size_at_stop==null?'—':s.support_size_at_stop}</div></div>
+    </div>
+  </div>`;
+}
+
 function questionHTML(q){
   return `<div class="qcard">
     <span class="qcode">${q.code}</span>
@@ -249,14 +401,22 @@ function questionHTML(q){
 
 function renderTrace(trace, live){
   if(!trace||!trace.length){$('trace').innerHTML='<div class="empty" style="padding:22px">Answers appear here as you respond.</div>';return;}
-  let h='<div class="trace-head"><span>#</span><span>Item</span><span>Ans</span><span>Belief before → after</span><span>Change</span></div>';
+  let h='<div class="trace-head"><span>#</span><span>Item</span><span>Ans</span><span>Belief before → after</span><span>Change</span><span>Selection</span></div>';
   for(const t of trace){
     const d=t.belief_after-t.belief_before;
     const cls=Math.abs(d)<0.005?'flat':(d>0?'up':'down');
     const sym=Math.abs(d)<0.005?'·':(d>0?'▲':'▼');
+    const s=t.selection;
+    let sel='—';
+    if(s&&s.applicable!==false){
+      if(s.support_size===null) sel='no item left';
+      else if(s.criterion_vacuous) sel='<span style="color:var(--warn)">vacuous</span>';
+      else sel='<span style="color:var(--good)">informative</span>';
+    }else if(s){ sel='n/a (random)'; }
     h+=`<div class="trow"><span>${t.step}</span><span>${t.item}</span><span>${t.value}</span>
       <span>${t.belief_before.toFixed(3)} <span class="arrow">→</span> <b>${t.belief_after.toFixed(3)}</b></span>
-      <span class="${cls}">${sym} ${Math.abs(d).toFixed(3)}</span></div>`;
+      <span class="${cls}">${sym} ${Math.abs(d).toFixed(3)}</span>
+      <span>${sel}</span></div>`;
   }
   $('trace').innerHTML=h;
 }
@@ -278,9 +438,10 @@ async function start(){
     if(mode==='auto'){
       const res=r.result;
       $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
-        `policy: ${r.policy} · asked ${res.asked} of 10 · stop: ${res.stop_reason}<br>true label (held out): ${res.true_label===1?'ASD-positive':'ASD-negative'}`);
+        `policy: ${r.policy} · asked ${res.asked} of ${BUDGET} allowed · stop: ${res.stop_reason}<br>true label (held out): ${res.true_label===1?'ASD-positive':'ASD-negative'}`);
       renderTrace(res.trace);
       setCF(res.counterfactual);
+      setSel(null,'');
       $('prog').style.width=(res.asked/BUDGET*100)+'%';
     }else{
       liveTrace=[];
@@ -288,6 +449,7 @@ async function start(){
         `<div class="meta">current risk (no answers yet): <b>${r.belief.toFixed(3)}</b></div>`;
       renderTrace(null);
       setCF(null);
+      setSel(r.selection,'choosing '+r.question.code);
     }
   }catch(e){toast('⚠ '+e.message);}
   finally{busy(false);}
@@ -302,15 +464,18 @@ async function answer(v){
     if(r.finished){
       const res=r.result;
       $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
-        `asked ${res.asked} of 10 questions · stop: ${res.stop_reason}`);
+        `asked ${res.asked} of ${BUDGET} allowed · stop: ${res.stop_reason}`);
       renderTrace(res.trace);
       setCF(res.counterfactual);
+      setSel(res.selection_summary||null,'');
+      if(res.selection_summary) $('selPanel').innerHTML=selSummaryHTML(res.selection_summary);
       $('stopBtn').disabled=true;
     }else{
       $('stage').innerHTML=questionHTML(r.next)+
         `<div class="meta">last answer ${r.trace_step.item}=${r.trace_step.value} ·
          risk ${r.belief_before.toFixed(3)} → <b>${r.belief_after.toFixed(3)}</b> · question ${asked}/${BUDGET}</div>`;
       renderTrace(liveTrace);
+      setSel(r.selection,'choosing '+r.next.code);
       $('stopBtn').disabled=false;
     }
   }catch(e){toast('⚠ '+e.message);}
@@ -324,9 +489,10 @@ async function stopEarly(){
       const res=r.result;
       $('prog').style.width=(res.asked/BUDGET*100)+'%';
       $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
-        `stopped early after ${res.asked} of 10 questions`);
+        `stopped early after ${res.asked} of ${BUDGET} allowed questions (stopped by you, not by a cost rule)`);
       renderTrace(res.trace);
       setCF(res.counterfactual);
+      $('selPanel').innerHTML=selSummaryHTML(res.selection_summary);
       $('stopBtn').disabled=true;
     }
   }catch(e){toast('⚠ '+e.message);}
@@ -340,7 +506,7 @@ function setCF(cf){
 function reset(){
   sid=null; asked=0; liveTrace=[]; $('prog').style.width='0%';
   $('stage').innerHTML='<div class="empty">No episode running.<br>Choose a mode and press <b>▶ Start episode</b>.</div>';
-  renderTrace(null); setCF(null);
+  renderTrace(null); setCF(null); setSel(null,'');
   $('stopBtn').disabled=true; $('resetBtn').disabled=true;
 }
 

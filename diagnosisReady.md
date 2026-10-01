@@ -7,6 +7,92 @@
 
 ---
 
+## 0. Update 2026-10-01 — what changed after this audit was written
+
+This document was written against commit `94b313e`. Six further defects were found
+and fixed afterwards, and **two results now run against the project's adaptive
+hypothesis**. Read this section before the rest; the remainder is the original
+audit, retained.
+
+| # | Defect | Where |
+|---|---|---|
+| P0-1/2/3 | `collect_episode` never delivered a terminal reward, stored the wrong legal set, dropped terminal transitions. **No learned policy had ever received a learning signal.** | `RL_TRAINING_REPORT.md §2` |
+| P0-4 | `stop_reason` could never be `"budget_exhausted"`, so `stopped_early_frac` was a constant 1.0 | `src/env/environment.py` |
+| P0-7 | epsilon-greedy used the unseeded module `random` | `src/policies/dqn.py` |
+| P0-9 | The canonical split was contaminated — 71 of 95 validation records were also in train, 24 in test. Row counts were right, which is why it survived review | `src/data/splits.py` |
+| P0-10 | `nn.Linear` drew from torch's global RNG before the caller seeded it, so **every artifact was non-reproducible regardless of its recorded seed** | `src/models/masked_predictor.py` |
+| P1-e | The 400-episode DQN was an **undertrained network**; it needs ~2,000 | `POLICY_BENCHMARK_REPORT.md §A.5` |
+
+Test suite: 191 passing, 0 skipped. All artifacts reproducible from their recorded seed (wall-clock fields excepted).
+
+## 0A. The two findings that change the research picture
+
+### 0A.1 At λ = 0 the objective saturates, so "adaptive stopping has value" is an artifact
+
+Under the circular label (`label = 1[sum(A) ≥ 4]`, verified 506/506) the empirical
+support becomes **pure** — every remaining training record carries the same label
+— after roughly four questions:
+
+| depth | 1 | 2 | 3 | 4 | 5 | 6 | 7+ |
+|---|---|---|---|---|---|---|---|
+| fraction of states with a pure support | 0.000 | 0.437 | 0.567 | 0.820 | 0.933 | 0.982 | 1.000 |
+
+Once the support is pure, `u_stop = 1 − (p_emp − y)²` is **exactly 1.0**, so
+`V*` is exactly **1.000000** and no further question can raise the reward. Two
+consequences, both measured:
+
+1. The exact reference's `pure_support_frac_at_stop` is **1.00**. It stops early
+   when the objective saturates, **not** when a short interview is sufficient.
+   The measured value of adaptive stopping at λ = 0 is therefore a property of
+   the label rule.
+2. `GreedyIGPolicy`'s information-gain criterion is **identically zero** on
+   **195 of 195** pure-support decision states — every legal item scores exactly
+   0, so `argmax` falls through to the lowest legal index. Measured on the
+   held-out split at B = 6, **61.3%** of decision states are pure-support.
+
+This is the deepest issue in the project, and it sits under §4 below: the
+circularity problem is not merely a caveat on the numbers, it undermines the
+*objective* the whole benchmark optimises. Evidence pack: `V6_LAMBDA_DECISION.md`.
+
+### 0A.2 H1 is not supported at the upper budgets, for every adaptive arm
+
+H1 (§4 of the spec) predicts the adaptive policy beats the exact best fixed
+subset on held-out Brier at matched budget. With the comparator now implemented
+(P1-d), it fails at B = 5 and B = 6 — **for greedy, for a Beta-prior EVOI policy,
+and for DQN alike**:
+
+| B | exact best fixed subset | beta_greedy | greedy | dqn | H1 |
+|---|---|---|---|---|---|
+| 3 | 0.1034 | **0.0876** | **0.0876** | **0.0864** | supported |
+| 4 | 0.0850 | **0.0735** | **0.0691** | **0.0748** | supported |
+| 5 | **0.0448** | 0.0709 | 0.0655 | 0.0660 | **not supported** |
+| 6 | **0.0479** | 0.0482 | 0.0512 | 0.0640 | **not supported** |
+
+This holds *even though* greedy and beta_greedy are the policies closest to `V*`
+on the empirical objective at every budget. Optimising the empirical objective
+harder does not generalise better on this cohort — the same pattern as 0A.1.
+
+Spec §4 pre-registers that *"failure to outperform the exact best fixed subset or
+generic CAT is a valid result"*, so this is reportable. But it is a real negative
+for the adaptive-value hypothesis and should be presented as one rather than
+softened.
+
+### 0A.3 What this means for the roadmap below
+
+The clinical-readiness gaps in §7 are unchanged and still dominate. Two items
+move to the front of the queue, and neither is on the §7 list:
+
+1. **V-6 (λ sign-off).** Every number in the repository is λ = 0, which is the
+   saturated regime. Until cost is priced, the benchmark cannot distinguish a
+   policy that stops because the evidence suffices from one that stops because the
+   objective has stopped moving. Evidence pack is ready in
+   `V6_LAMBDA_DECISION.md`; it is decision input and does not sign off the gate.
+2. **Polish (V-4/V-7).** It is no longer a secondary transfer check. It is the
+   **sole** cohort on which 0A.1 and 0A.2 can be adjudicated, because clinical
+   labels would not produce a pure support. Sealing it remains correct.
+
+---
+
 ## 1. The central finding: the framing is wrong before the code is
 
 The request that prompted this audit was "make the project ready for diagnosis." Before any engineering work, that goal needs to be split, because it conflates two projects with very different economics.

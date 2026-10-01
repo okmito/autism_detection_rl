@@ -8,6 +8,16 @@ from typing import List, Dict, Any
 
 STOP = -1
 
+#: Finite floor for log-probabilities, so the PPO importance ratio
+#: ``exp(logp - old_logp)`` cannot evaluate ``-inf - -inf`` and produce ``nan``.
+LOG_FLOOR = float(np.log(1e-12))
+
+
+def _log_softmax(x: np.ndarray) -> np.ndarray:
+    m = x.max()
+    e = np.exp(x - m)
+    return (x - m) - np.log(e.sum())
+
 class PPOPolicy:
     def __init__(self, n_items: int, m_list=None, device: str="cpu"):
         self.n_items = n_items
@@ -47,11 +57,55 @@ class PPOPolicy:
         return STOP if idx == self.n_items else idx
 
     def legal_mask(self, legal) -> torch.Tensor:
-        """Boolean mask over actions, True where the action is legal."""
+        """Boolean mask over actions, True where the action is legal.
+
+        ``legal=None`` marks a terminal transition, whose next-state legal set
+        does not exist. Terminal rows carry no bootstrap target, so the mask is
+        left unconstrained there; passing ``None`` previously raised
+        ``TypeError`` inside ``train_step`` and made PPO unable to consume any
+        batch containing a terminal transition.
+        """
         mask = torch.zeros(self.n_items + 1, dtype=torch.bool, device=self.device)
+        if legal is None:
+            return torch.ones(self.n_items + 1, dtype=torch.bool, device=self.device)
         for a in legal:
             mask[self.n_items if a == STOP else a] = True
         return mask
+
+    def masked_log_probs(self, state, legal) -> np.ndarray:
+        """Log-probabilities over legal actions, computed without a grad.
+
+        Shared by the trainers so the pre-update log-probabilities used for the
+        PPO importance ratio are derived identically in every script.
+
+        Values are floored at ``log(1e-12)`` rather than allowed to reach
+        ``-inf``: a legal action whose logit is far below the maximum underflows
+        ``exp`` to exactly zero, and ``-inf - -inf`` in the importance ratio
+        then produces ``nan`` losses. The floor only affects legal actions whose
+        probability is already numerically zero; the taken action is always
+        legal, so the ratio is well defined.
+        """
+        with torch.no_grad():
+            logits = self.actor(self._encode(state)).detach().cpu().numpy()[0]
+        if legal is None:
+            return np.maximum(_log_softmax(logits), LOG_FLOOR)
+        masked = np.full(self.n_items + 1, float("-inf"))
+        for a in legal:
+            idx = self.n_items if a == STOP else a
+            masked[idx] = logits[idx]
+        finite = np.isfinite(masked)
+        if not finite.any():
+            return np.full(self.n_items + 1, LOG_FLOOR)
+        m = masked[finite].max()
+        e = np.exp(masked - m)
+        e[~finite] = 0.0
+        total = e.sum()
+        if total <= 0:
+            return np.full(self.n_items + 1, LOG_FLOOR)
+        p = e / total
+        # max() before log() keeps a legal action that underflowed to exactly 0
+        # out of the log() domain; the outer maximum then raises it to LOG_FLOOR.
+        return np.maximum(np.log(np.maximum(p, 1e-300)), LOG_FLOOR)
 
     def __call__(self, state, legal):
         return self.select_action(state, legal, deterministic=True)

@@ -1,5 +1,6 @@
 """Double DQN policy — §11.2"""
 from __future__ import annotations
+import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -20,10 +21,17 @@ class DQNNet(nn.Module):
         return self.net(x)
 
 class DQNPolicy:
-    def __init__(self, n_items: int, m_list=None, device: str = "cpu", lr: float = 1e-3):
+    def __init__(self, n_items: int, m_list=None, device: str = "cpu", lr: float = 1e-3,
+                 seed: int | None = 0):
         self.n_items = n_items
         self.m_list = m_list
         self.device = device
+        # Epsilon-greedy exploration used the module-level ``random`` generator,
+        # which is not seeded by ``torch.manual_seed``/``np.random.seed``. Two
+        # runs with the same seed therefore produced different rollouts, and no
+        # DQN number in the repository was reproducible. A private seeded
+        # generator makes the exploration stream reproducible.
+        self.rng = random.Random(seed)
         if m_list is None:
             input_dim = 4*n_items+1
         else:
@@ -39,9 +47,8 @@ class DQNPolicy:
         return torch.tensor(v, dtype=torch.float32, device=self.device).unsqueeze(0)
 
     def select_action(self, state: Dict[str, Any], legal: List[int], epsilon: float = 0.0) -> int:
-        import random
-        if random.random() < epsilon:
-            return random.choice(legal)
+        if self.rng.random() < epsilon:
+            return self.rng.choice(legal)
         # map STOP sentinel to index n_items
         q_vals = self.q(self._encode(state)).detach().cpu().numpy()[0]
         # mask illegal
@@ -55,12 +62,25 @@ class DQNPolicy:
     def __call__(self, state: Dict[str, Any], legal: List[int]) -> int:
         return self.select_action(state, legal, epsilon=0.0)
 
-    def train_step(self, batch, gamma: float = 0.99):
+    def train_step(self, batch, gamma: float = 0.99, bootstrap: bool = True):
         """One Double-DQN update.
 
         ``batch`` is a list of ``(s, a, r, s_next, done, legal_next)`` tuples as
         produced by :class:`src.policies.replay.ReplayBuffer`. ``s_next`` is
         ``None`` for terminal transitions; ``legal_next`` is ignored then.
+
+        ``bootstrap``
+            When ``True`` (the default) the target is ``r + gamma * max_a Q(s',a)``.
+            When ``False`` the stored ``r`` is taken to be a *return-to-go* — as
+            produced by ``collect_episode(..., gamma=g)`` — so the target is
+            simply ``r`` and no bootstrap term is added.
+
+            The distinction matters because §11.1 emits a reward only at the end
+            of an episode. With immediate rewards and a terminal reward, a
+            ``B``-step episode requires a ``B``-step bootstrap chain, and the
+            root action's value is then decided by a product of ``B``
+            noisy estimates. Switching to returns-to-go removes the chain
+            entirely. See ``scripts/step7_rl_diagnosis.py``.
         """
         if not batch:
             raise ValueError("train_step requires a non-empty batch")
@@ -107,7 +127,12 @@ class DQNPolicy:
             next_actions = self.q(next_states).masked_fill(illegal, float("-inf")).argmax(dim=1)
             target_vals = self.target(next_states).gather(1, next_actions.unsqueeze(1)).squeeze(1)
             # Terminal rows contribute nothing: done == 1 zeroes the bootstrap.
-            y = rewards + gamma * target_vals * (1 - dones)
+            if bootstrap:
+                y = rewards + gamma * target_vals * (1 - dones)
+            else:
+                # `rewards` already holds a return-to-go; adding a bootstrap term
+                # would double-count the future.
+                y = rewards
 
         q_vals = self.q(states).gather(1, actions_idx.unsqueeze(1)).squeeze(1)
         loss = nn.MSELoss()(q_vals, y)
