@@ -530,18 +530,39 @@ vs 0.0512). That is a direct measurement of the saturation problem: on a
 saturated support the empirical objective is constant and cannot distinguish the
 policies, while the held-out data can.
 
-### A units finding that belongs in the V-6 pack
+### ⚠️ RETRACTED — "A units finding that belongs in the V-6 pack"
 
-**One reward, two scales.** The λ grid proposed in `V6_LAMBDA_DECISION.md` is
-justified against a marginal utility of 0.05–0.15 for the neural-predictor
-reward. The support-posterior EVOI that `beta_greedy` uses has a median max-EVOI
-of **0.0015 at depth 1** and **0.108 at depth 0** — roughly two orders of
-magnitude smaller, and **negative** at depths 3–5 (asking more genuinely cannot
-help a saturated support).
+**This subsection was wrong and is withdrawn.** It originally claimed *"One reward,
+two scales"*: that the support-posterior EVOI is ~100× smaller than the
+neural-predictor marginal utility, so a λ grid could not transfer between them, and
+that `beta_greedy` therefore needs its own calibration range of 0.001–0.01.
 
-So a λ grid **does not transfer** between the two reward definitions without
-recalibration. `beta_greedy`'s own useful range is 0.001–0.01 and should be swept
-separately. Recorded as `lambda_units_caveat` in the Step-6 artifact.
+Two separate errors, both now measured:
+
+1. **The comparison premise was never measured.** The "0.05–0.15 marginal utility for
+   the neural-predictor reward" this rested on appeared in prose only — no code
+   produced it. Measured, 0.05–0.15 is approximately the **p75–p95 band** of the
+   predictor's gain distribution, not a typical value.
+2. **There is no unit mismatch to bridge.** Both estimators score the same functional
+   form `mean_y[1 − (p − y)²]` over the *same* support labels, differing only in
+   whether `p` is the Beta-smoothed support posterior or the calibrated predictor, so
+   both are expected Brier improvement with ceiling `max_p[1 − p(1−p)] = 0.25`.
+   Measured ratio (support ÷ predictor): **0.427 at the median, 0.844 at the mean,
+   1.017 at p75** — a factor of ~1, not ~100. The original number came from comparing
+   the support-EVOI median *at depth 1* (0.0015) against the unsourced figure, when
+   the predictor's own depth-1 median is 0.0022.
+
+`beta_greedy`'s "own useful range of 0.001–0.01" is withdrawn with the premise. What
+survives is a different and sharper problem: on a **pure** support the
+support-posterior EVOI is analytically **non-positive**
+(`gain = 1/(n+2)² − Σ_v w_v·1/(n_v+2)² ≤ 0`, because every child support is pure and
+smaller), so the statistic behaves as a support-purity indicator rather than a graded
+information measure — and the threshold grid spans only ~20 distinct behaviours with a
+cliff between 0.001 and 0.003.
+
+Evidence, and the decision this feeds: `V6_STOPPING_THRESHOLD_DECISION.md` §E3–§E4 and
+`scripts/step8_evoi_scale_analysis.py`. **V-6 remains open with no threshold
+selected.**
 
 ### H1 still fails, now for three independent adaptive arms
 
