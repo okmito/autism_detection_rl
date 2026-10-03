@@ -12,12 +12,30 @@ STOP = -1
 class ExactDP:
     def __init__(self, records: List[Dict[str, Any]], n_items: int, budget: int, b_min: int = 0,
                  lambda_cost: float = 0.0, cost_mode: str = "uniform", cost_weights=None,
-                 max_states: int = 50_000_000, max_hours: float = 24, max_ram_gb: float = 32):
+                 max_states: int = 50_000_000, max_hours: float = 24, max_ram_gb: int = 32,
+                 predictor=None):
         self.records = records
         self.n_items = n_items
         self.B = budget
         self.b_min = b_min
         self.lambda_cost = lambda_cost
+        # OPTIONAL predictor, added 2026-10-02.
+        #
+        # Without it the solver optimises ``1 - (p_emp - y)^2`` where ``p_emp`` is
+        # the empirical label mean on the support. The ENVIRONMENT, however, scores
+        # ``R = 1 - (p_hat - y)^2`` with ``p_hat`` produced by the frozen scorer.
+        # Those are different objectives, so an "optimality gap" between the solver
+        # and a policy trained under the environment reward would be meaningless.
+        #
+        # When a predictor is supplied the solver optimises the environment reward in
+        # expectation over the empirical support:
+        #     E[(p_hat - y)^2] = p_hat^2 - 2*p_hat*p_emp + p_emp      (y in {0,1})
+        # The empirical ``p_emp`` is still used for the LABEL distribution, which is
+        # the transition model, exactly as before. Only the reward's ``p`` changes.
+        #
+        # Default None preserves the previous behaviour bit-for-bit, so every
+        # existing caller and recorded artifact is unaffected.
+        self.predictor = predictor
         from src.env.costs import get_costs
         self.costs = get_costs(n_items, mode=cost_mode, weights=cost_weights)
         self.max_states = max_states
@@ -64,13 +82,26 @@ class ExactDP:
                 break
         return np.where(consistent)[0]
 
-    def _p_emp_and_utility(self, idx: np.ndarray) -> Tuple[float, float]:
+    def _p_emp_and_utility(self, idx: np.ndarray, mask: np.ndarray | None = None,
+                           value: np.ndarray | None = None) -> Tuple[float, float]:
         if len(idx) == 0:
             return 0.5, 0.0  # unreachable — should not be called
         y_s = self.y[idx]
         p_emp = float(y_s.mean())
-        # U_stop = 1 - mean((p_emp - y)^2)
-        brier = np.mean((p_emp - y_s) ** 2)
+        if self.predictor is None or mask is None:
+            # Original objective: 1 - mean((p_emp - y)^2)
+            brier = np.mean((p_emp - y_s) ** 2)
+            return p_emp, float(1 - brier)
+
+        # Environment objective in expectation over the empirical support:
+        # E[(p_hat - y)^2] = p_hat^2 - 2*p_hat*p_emp + p_emp   since y^2 == y.
+        state = {"mask": np.asarray(mask, dtype=int),
+                 "value": np.asarray(value, dtype=int),
+                 "n": self.n_items,
+                 "questions_remaining": 0,
+                 "budget": self.n_items}
+        p_hat = float(self.predictor(state))
+        brier = p_hat * p_hat - 2.0 * p_hat * p_emp + p_emp
         return p_emp, float(1 - brier)
 
     def _V(self, mask: np.ndarray, value: np.ndarray, b: int, asked_count: int, asked_set: Tuple[int, ...]) -> float:
@@ -95,7 +126,7 @@ class ExactDP:
         # Forced stop if b==0 or no legal
         forced_stop = (b == 0) or (len(legal) == 0)
 
-        _, u_stop = self._p_emp_and_utility(idx)
+        _, u_stop = self._p_emp_and_utility(idx, mask, value)
         # cost already incurred is stored via asked_set
         # For Bellman, child value includes future costs; current cost is sunk.
 

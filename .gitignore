@@ -23,3 +23,6 @@ htmlcov/
 dist/
 build/
 /data/QCHAT_dataset2 mendeley.sav
+
+# SPSS raw exports: participant-level data, never tracked
+data/*.sav

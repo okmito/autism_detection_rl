@@ -3,512 +3,939 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Adaptive Screening — Policy Demo</title>
-    <link rel="icon" href="data:,">
+<title>Adaptive Autism Screening — Research Prototype</title>
+<link rel="icon" href="data:,">
 <style>
-:root{
-  --bg:#0b1020; --panel:#121a33; --panel2:#0e1529; --line:#23304f;
-  --txt:#e8ecf8; --mut:#93a0c4; --acc:#5b8cff; --acc2:#8a5bff;
-  --good:#2ee6a8; --warn:#ffb454; --bad:#ff5d7a;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{
-  background:radial-gradient(1100px 600px at 85% -10%, #1a2a5e55, transparent),
-             radial-gradient(900px 500px at -10% 110%, #3a1a6e44, transparent), var(--bg);
-  color:var(--txt); font-family:'Segoe UI',system-ui,-apple-system,sans-serif; min-height:100vh;
-}
-.wrap{max-width:1120px;margin:0 auto;padding:28px 20px 60px}
-header{display:flex;align-items:center;gap:14px;margin-bottom:6px}
-.logo{width:42px;height:42px;border-radius:12px;flex:0 0 auto;
-  background:linear-gradient(135deg,var(--acc),var(--acc2));
-  display:flex;align-items:center;justify-content:center;font-size:22px}
-h1{font-size:22px;font-weight:650;letter-spacing:.2px}
-.sub{color:var(--mut);font-size:13px;margin-top:2px}
-.badge{margin-left:auto;font-size:11px;color:var(--warn);border:1px solid #ffb45444;
-  background:#ffb45414;padding:5px 10px;border-radius:999px;white-space:nowrap}
-.grid{display:grid;grid-template-columns:380px 1fr;gap:18px;margin-top:20px}
-@media(max-width:900px){.grid{grid-template-columns:1fr}}
-.card{background:linear-gradient(180deg,var(--panel),var(--panel2));
-  border:1px solid var(--line);border-radius:16px;padding:20px}
-.card h2{font-size:13px;text-transform:uppercase;letter-spacing:1.4px;color:var(--mut);margin-bottom:14px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;
-  border:none;border-radius:10px;padding:11px 16px;font-size:14px;font-weight:600;
-  color:#fff;background:linear-gradient(135deg,var(--acc),var(--acc2));transition:.15s}
-.btn:hover{filter:brightness(1.12)}
-.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
-.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
-.btn.danger{background:linear-gradient(135deg,#ff5d7a,#ff8a5b)}
-.btn-row{display:flex;gap:10px;flex-wrap:wrap}
-.mode{display:flex;gap:8px;margin-bottom:16px}
-.mode button{flex:1;padding:9px;border-radius:9px;border:1px solid var(--line);
-  background:transparent;color:var(--mut);font-size:13px;cursor:pointer}
-.mode button.on{background:#5b8cff1f;border-color:var(--acc);color:var(--txt)}
-.policy{display:flex;gap:8px;margin-bottom:18px}
-.policy button{flex:1;padding:9px;border-radius:9px;border:1px solid var(--line);
-  background:transparent;color:var(--mut);font-size:13px;cursor:pointer}
-.policy button.on{background:#8a5bff1f;border-color:var(--acc2);color:var(--txt)}
-.qcard{background:#0b1226;border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
-.qcode{display:inline-block;font-size:11px;font-weight:700;color:var(--acc);
-  border:1px solid #5b8cff55;border-radius:6px;padding:2px 8px;margin-bottom:8px}
-.qtext{font-size:15px;line-height:1.45;margin-bottom:14px}
-.ans{display:flex;gap:10px}
-.ans button{flex:1;padding:12px;border-radius:10px;border:1px solid var(--line);
-  background:#141d3a;color:var(--txt);font-size:14px;cursor:pointer;transition:.15s}
-.ans button:hover{border-color:var(--acc);background:#182449}
-.gauge{position:relative;width:190px;height:190px;margin:6px auto 4px}
-.gauge svg{transform:rotate(-90deg)}
-.gauge .track{stroke:#1e2a4d;fill:none}
-.gauge .bar{stroke:url(#gg);fill:none;stroke-linecap:round;transition:stroke-dashoffset .8s cubic-bezier(.4,0,.2,1)}
-.gval{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
-.gval .num{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums}
-.gval .lab{font-size:11px;color:var(--mut);letter-spacing:1px;text-transform:uppercase;margin-top:2px}
-.decision{text-align:center;margin:14px 0 4px}
-.decision .d{display:inline-block;font-size:17px;font-weight:700;padding:9px 22px;border-radius:999px}
-.d-ref{background:#ff5d7a22;color:var(--bad);border:1px solid #ff5d7a66}
-.d-nore{background:#2ee6a818;color:var(--good);border:1px solid #2ee6a855}
-.meta{text-align:center;color:var(--mut);font-size:12px;margin-top:10px;line-height:1.7}
-.trace{margin-top:6px}
-.trow{display:grid;grid-template-columns:30px 36px 30px 1fr 1fr 96px;gap:8px;align-items:center;
-  padding:8px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:7px;background:#0b1226;font-size:12.5px}
-.trow .up{color:var(--bad)} .trow .down{color:var(--good)} .trow .flat{color:var(--mut)}
-.trace-head{display:grid;grid-template-columns:30px 36px 30px 1fr 1fr 96px;gap:8px;
-  font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px;
-  padding:0 10px 6px}
-.arrow{color:var(--mut)}
-.cf{margin-top:14px;border-left:3px solid var(--acc2);background:#8a5bff10;
-  border-radius:0 10px 10px 0;padding:12px 14px;font-size:13px;line-height:1.55}
-.cf b{color:var(--acc2)}
-.cf.robust{border-left-color:var(--good);background:#2ee6a80f}
-.cf.robust b{color:var(--good)}
-.kv{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.kv .box{background:#0b1226;border:1px solid var(--line);border-radius:10px;padding:10px 12px}
-.kv .k{font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px}
-.kv .v{font-size:17px;font-weight:650;margin-top:3px;font-variant-numeric:tabular-nums}
-.empty{color:var(--mut);font-size:13px;text-align:center;padding:46px 10px;line-height:1.8}
-.spin{width:15px;height:15px;border:2px solid #ffffff44;border-top-color:#fff;border-radius:50%;
-  display:inline-block;animation:sp .7s linear infinite;vertical-align:-2px}
-@keyframes sp{to{transform:rotate(360deg)}}
-.howto{font-size:12.5px;color:var(--mut);line-height:1.75}
-.howto li{margin-left:16px;margin-top:5px}
-footer{margin-top:26px;color:#5f6b8f;font-size:11.5px;text-align:center;line-height:1.8}
-.progress{height:6px;background:#1a2544;border-radius:99px;overflow:hidden;margin:12px 0 16px}
-.progress i{display:block;height:100%;width:0;border-radius:99px;
-  background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .5s}
-.hidden{display:none}
-.warnbox{margin-top:12px;border-left:3px solid var(--warn);background:#ffb4540f;
-  border-radius:0 10px 10px 0;padding:11px 13px;font-size:12.5px;line-height:1.6;color:#dfe5f5}
-.warnbox b{color:var(--warn)}
-.warnbox code{background:#0b1226;padding:1px 5px;border-radius:4px;font-size:11.5px}
-.selbox{margin-top:12px;border-left:3px solid var(--acc);background:#5b8cff0f;
-  border-radius:0 10px 10px 0;padding:11px 13px;font-size:12.5px;line-height:1.6}
-.selbox b{color:var(--acc)}
-.selbox.degenerate{border-left-color:var(--warn);background:#ffb4540f}
-.selbox.degenerate b{color:var(--warn)}
-.selbox .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0 4px}
-.selbox .kv .box{background:#0b1226;padding:7px 9px}
-.selbox .kv .v{font-size:14px}
-.pill{display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:999px;
-  border:1px solid var(--line);color:var(--mut);margin:0 5px 5px 0}
-.pill.warn{border-color:#ffb45466;color:var(--warn);background:#ffb45414}
-.pill.good{border-color:#2ee6a866;color:var(--good);background:#2ee6a814}
-#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
-  background:#2a1636;border:1px solid var(--bad);color:var(--txt);padding:10px 18px;
-  border-radius:10px;font-size:13px;opacity:0;pointer-events:none;transition:.25s;z-index:9}
-#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  :root{
+    --bg:#f6f7f9;
+    --surface:#ffffff;
+    --surface-2:#fbfcfd;
+    --line:#e3e6ea;
+    --line-soft:#edeff2;
+    --text:#16191d;
+    --muted:#5f6773;
+    --muted-2:#8a919b;
+    --accent:#2f6feb;
+    --accent-ink:#1c4bb5;
+    --accent-soft:#eef3fe;
+    --warn:#a2570a;
+    --warn-soft:#fdf6ea;
+    --good:#16713c;
+    --good-soft:#edf8f1;
+    --radius:10px;
+    --radius-lg:14px;
+    --shadow:0 1px 2px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
+    font-size:15px; line-height:1.55; min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:0 20px 72px}
+
+  /* ---------------------------------------------------------- header */
+  header{
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    padding:20px 0 18px;border-bottom:1px solid var(--line);margin-bottom:28px;
+  }
+  .mark{
+    width:34px;height:34px;border-radius:9px;flex:0 0 auto;
+    background:var(--accent-soft);border:1px solid #d8e4fb;
+    display:flex;align-items:center;justify-content:center;color:var(--accent-ink);
+  }
+  .brand h1{font-size:16px;font-weight:620;letter-spacing:-.01em;line-height:1.25}
+  .brand .role{
+    font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--accent-ink);background:var(--accent-soft);border:1px solid #d8e4fb;
+    padding:2px 7px;border-radius:5px;display:inline-block;margin-top:5px;
+  }
+  .brand .tagline{font-size:12.5px;color:var(--muted);margin-top:6px;max-width:44ch}
+  .chips{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .chip{
+    font-size:12px;color:var(--muted);background:var(--surface);
+    border:1px solid var(--line);border-radius:999px;padding:5px 11px;white-space:nowrap;
+  }
+  .chip b{color:var(--text);font-weight:600}
+  .chip[hidden]{display:none}
+
+  /* ------------------------------------------------------------ cards */
+  .card{
+    background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--radius-lg);padding:22px;box-shadow:var(--shadow);margin-bottom:16px;
+  }
+  .card-title{
+    font-size:11px;font-weight:640;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:16px;
+  }
+
+  /* ---------------------------------------------------------- start */
+  .field{margin-bottom:22px}
+  .field > label,.field-label{
+    display:block;font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text);
+  }
+  .opts{display:grid;gap:8px}
+  .opt{
+    display:flex;gap:11px;align-items:flex-start;width:100%;text-align:left;
+    background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);
+    padding:12px 14px;cursor:pointer;font:inherit;color:inherit;
+    transition:border-color .14s ease, background .14s ease;
+  }
+  .opt:hover:not(:disabled){border-color:var(--line-strong);background:var(--surface)}
+  .opt[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+  .opt:disabled{opacity:.5;cursor:not-allowed}
+  .opt .dot{
+    width:15px;height:15px;border-radius:50%;border:1.5px solid var(--line-strong);
+    flex:0 0 auto;margin-top:3px;position:relative;background:var(--surface);
+  }
+  .opt[aria-pressed="true"] .dot{border-color:var(--accent)}
+  .opt[aria-pressed="true"] .dot::after{
+    content:"";position:absolute;inset:3px;border-radius:50%;background:var(--accent);
+  }
+  .opt .lbl{font-size:14px;font-weight:560;line-height:1.35}
+  .opt .desc{font-size:12.5px;color:var(--muted);margin-top:3px;line-height:1.45}
+
+  .readout{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;
+  }
+  .readout .box{
+    background:var(--surface-2);border:1px solid var(--line-soft);
+    border-radius:var(--radius);padding:11px 13px;
+  }
+  .readout .k{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .readout .v{font-size:15px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+
+  /* --------------------------------------------------------- buttons */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;
+    font:inherit;font-size:14px;font-weight:580;border-radius:var(--radius);
+    padding:11px 18px;border:1px solid transparent;background:var(--accent);color:#fff;
+    transition:background .14s ease;min-height:42px;
+  }
+  .btn:hover:not(:disabled){background:var(--accent-ink)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:var(--surface);border-color:var(--line);color:var(--text)}
+  .btn.ghost:hover:not(:disabled){background:var(--surface-2);border-color:var(--line-strong)}
+  .btn-row{display:flex;gap:10px;flex-wrap:wrap}
+
+  /* ------------------------------------------------------- interview */
+  .qhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+  .qcount{
+    font-size:11px;font-weight:660;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--muted-2);
+  }
+  .qcode{
+    font-size:11.5px;font-weight:660;letter-spacing:.05em;color:var(--accent-ink);
+    background:var(--accent-soft);border:1px solid #d8e4fb;border-radius:5px;padding:2px 7px;
+  }
+  .qtext{font-size:19px;line-height:1.45;font-weight:500;letter-spacing:-.005em;margin-bottom:22px}
+
+  .answers{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:520px){.answers{grid-template-columns:1fr}}
+  .ansbtn{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    font:inherit;cursor:pointer;background:var(--surface-2);
+    border:1.5px solid var(--line);border-radius:var(--radius);
+    padding:18px 12px;min-height:76px;color:var(--text);
+    transition:border-color .14s ease, background .14s ease;
+  }
+  .ansbtn:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft)}
+  .ansbtn:disabled{opacity:.5;cursor:not-allowed}
+  .ansbtn .v{font-size:16px;font-weight:620}
+  .ansbtn .m{font-size:12px;color:var(--muted)}
+
+  .bar{height:4px;background:var(--line-soft);border-radius:99px;overflow:hidden;margin:18px 0 0}
+  .bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .35s ease}
+
+  .status{
+    display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);
+    margin-top:12px;min-height:20px;
+  }
+  .spin{
+    width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;display:inline-block;animation:sp .7s linear infinite;flex:0 0 auto;
+  }
+  @keyframes sp{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){
+    .bar i{transition:none}
+    .spin{animation-duration:2s}
+  }
+
+  /* ------------------------------------------------------------ misc */
+  details{border-top:1px solid var(--line-soft);padding-top:12px;margin-top:14px}
+  details:first-of-type{border-top:none}
+  summary{
+    cursor:pointer;font-size:13px;font-weight:560;color:var(--muted);
+    list-style:none;display:flex;align-items:center;gap:7px;padding:3px 0;
+  }
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"›";font-size:16px;line-height:1;transition:transform .15s ease}
+  details[open] > summary::before{transform:rotate(90deg)}
+  summary:hover{color:var(--text)}
+  summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+  .dbody{font-size:13px;color:var(--muted);line-height:1.6;padding:8px 0 2px}
+  .dbody b{color:var(--text);font-weight:580}
+  .dbody code{background:var(--surface-2);border:1px solid var(--line-soft);
+    border-radius:4px;padding:1px 5px;font-size:12px}
+
+  .note{
+    border-left:2px solid var(--accent);background:var(--accent-soft);
+    border-radius:0 var(--radius) var(--radius) 0;padding:11px 13px;
+    font-size:12.5px;line-height:1.6;color:#28406e;
+  }
+  .note.warn{border-left-color:var(--warn);background:var(--warn-soft);color:#6b4409}
+  .note.good{border-left-color:var(--good);background:var(--good-soft);color:#14532d}
+
+  .kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:9px;margin-top:10px}
+  .kv .box{background:var(--surface-2);border:1px solid var(--line-soft);
+    border-radius:var(--radius);padding:9px 11px}
+  .kv .k{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .kv .v{font-size:15px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+
+  /* --------------------------------------------------------- result */
+  .result-hero{text-align:center;padding:8px 0 4px}
+  .result-hero .num{
+    font-size:46px;font-weight:640;letter-spacing:-.02em;line-height:1.1;
+    font-variant-numeric:tabular-nums;color:var(--text);
+  }
+  .result-hero .lab{font-size:12px;color:var(--muted);margin-top:6px}
+  .decision{
+    display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;
+    border-radius:999px;padding:7px 15px;margin-top:16px;
+  }
+  .decision.ref{background:var(--warn-soft);color:var(--warn);border:1px solid #f0dcc0}
+  .decision.noref{background:var(--good-soft);color:var(--good);border:1px solid #cfe8da}
+  .ruler{height:4px;background:var(--line-soft);border-radius:99px;margin:18px 0 6px;position:relative}
+  .ruler i{position:absolute;top:-3px;width:2px;height:10px;background:var(--muted-2);border-radius:2px}
+  .ruler-scale{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted-2)}
+
+  .trace{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+  .trace th{
+    text-align:left;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;padding:0 8px 6px;border-bottom:1px solid var(--line);
+  }
+  .trace td{padding:7px 8px;border-bottom:1px solid var(--line-soft);font-variant-numeric:tabular-nums}
+  .trace td.num{text-align:right}
+  .empty{color:var(--muted);font-size:13.5px;text-align:center;padding:34px 12px;line-height:1.7}
+
+  .err{
+    border-left:2px solid #b42318;background:#fef3f2;border-radius:0 var(--radius) var(--radius) 0;
+    padding:12px 14px;font-size:13px;color:#7a271a;
+  }
+  .err summary{color:#7a271a}
+  .err pre{
+    margin-top:8px;font-size:11.5px;white-space:pre-wrap;word-break:break-word;
+    background:var(--surface);border:1px solid #f3d6d2;border-radius:6px;padding:8px;
+    max-height:150px;overflow:auto;color:#5c1f16;
+  }
+
+  footer{
+    margin-top:26px;padding-top:18px;border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--muted-2);line-height:1.75;
+  }
+  .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+      clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  button:focus-visible,.opt:focus-visible,.ansbtn:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px;
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
+
   <header>
-    <div class="logo">🧩</div>
-    <div>
-      <h1>Adaptive Autism Screening — Question Selection</h1>
-      <div class="sub">A rule-based information-gain policy picks which Q-CHAT-10 questions to ask · budget-constrained · research prototype</div>
+    <div class="mark" aria-hidden="true">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+      </svg>
     </div>
-    <div class="badge">⚠ Screening research demo — NOT a diagnosis</div>
+    <div class="brand">
+      <h1>Adaptive Autism Screening</h1>
+      <span class="role">Research Prototype</span>
+      <div class="tagline">Adaptive questionnaire-based screening using intelligent question selection.</div>
+    </div>
+    <div class="chips">
+      <span class="chip" id="chipPolicy" hidden>Policy <b>—</b></span>
+      <span class="chip" id="chipBudget" hidden>Budget <b>—</b></span>
+    </div>
   </header>
 
-  <div class="grid">
-    <!-- LEFT COLUMN -->
-    <div>
-      <div class="card">
-        <h2>Run a screening episode</h2>
-        <div class="mode">
-          <button id="m-int" class="on" onclick="setMode('interactive')">Interactive interview</button>
-          <button id="m-auto" onclick="setMode('auto')">Auto episode</button>
-        </div>
-        <div class="policy">
-          <button id="p-greedy" class="on" onclick="setPolicy('greedy')">Policy: Greedy (deterministic)</button>
-          <button id="p-random" onclick="setPolicy('random')">Policy: Random (new draw each run)</button>
-        </div>
-        <div class="meta" style="margin:-8px 0 14px;text-align:left">
-          No reinforcement-learning policy is served here. The RL arms (DQN, PPO) are benchmarked
-          offline in <code>scripts/step5_policy_benchmark.py</code>; this demo runs the
-          information-gain and random baselines so the selection logic is inspectable.
-        </div>
-        <div class="warnbox" id="randNote" style="display:none;margin:-6px 0 14px">
-          <b>Why did Random ask fewer questions?</b> The random baseline draws uniformly from the
-          legal actions, which include “stop”, so it can end the episode early — including before
-          asking anything at all (~9% of episodes ask zero questions, and only ~45% reach the full
-          budget of 6). This is a property of the baseline as specified, not an adaptive decision,
-          so its question count is <b>not</b> comparable with the greedy policy's.
-        </div>
-        <div class="btn-row">
-          <button class="btn" id="startBtn" onclick="start()">▶ Start episode</button>
-          <button class="btn ghost" id="stopBtn" onclick="stopEarly()" disabled>⏹ Stop &amp; predict</button>
-          <button class="btn ghost" id="resetBtn" onclick="reset()" disabled>↺ Reset</button>
-        </div>
-        <div class="progress"><i id="prog"></i></div>          <div class="howto" id="howto">
-            <b>How it works</b>
-            <ul>
-              <li>The policy chooses <b>which question</b> to ask next (max 6 of 10).</li>
-              <li><b>Greedy</b> is deterministic: it scores every unasked question by expected
-                  information gain about the label, given the answers so far, and takes the best —
-                  the same answers give the same sequence by design.</li>
-              <li><b>Random</b> draws a fresh random action each step, including “stop”, so it can
-                  finish early — a baseline for comparison, not an adaptive policy.</li>
-              <li>After each answer the model updates the risk estimate.</li>
-              <li>“Stop &amp; predict” ends early and gives the recommendation.</li>
-              <li>Auto mode replays a full episode from the held-out test set.</li>
-            </ul>
-            <div class="warnbox">
-              <b>Why does it often ask A1, A2, A3… in order?</b>
-              On this dataset the labels are a deterministic sum-threshold over the questions
-              themselves, so after a few answers <i>every training record still consistent with
-              your answers carries the same label</i>. The support is then <b>label-pure</b>,
-              expected information gain is exactly <b>0 for every remaining question</b>, and
-              <code>argmax</code> has nothing to choose between — the policy falls back to the
-              lowest-numbered unasked item. This is measured, not a bug in the demo, and it is
-              shown per step in the <b>Selection</b> panel below.
-            </div>
-          </div>
-      </div>
+  <!-- ================================================= START SCREEN -->
+  <section class="card" id="startScreen" aria-labelledby="startTitle">
+    <div class="card-title" id="startTitle">Configure session</div>
 
-      <div class="card" style="margin-top:18px">
-        <h2>Project status (generated artifacts)</h2>
+    <div class="field">
+      <span class="field-label" id="polLabel">Policy</span>
+      <div class="opts" id="policyOpts" role="group" aria-labelledby="polLabel"></div>
+    </div>
+
+    <div class="field">
+      <span class="field-label" id="modeLabel">Session type</span>
+      <div class="opts" id="modeOpts" role="group" aria-labelledby="modeLabel"></div>
+    </div>
+
+    <div class="field" style="margin-bottom:18px">
+      <span class="field-label">Session parameters</span>
+      <div class="readout">
+        <div class="box"><div class="k">Question budget</div><div class="v" id="roBudget">—</div></div>
+        <div class="box"><div class="k">Instrument size</div><div class="v" id="roItems">—</div></div>
+        <div class="box"><div class="k">Decision threshold</div><div class="v" id="roTau">—</div></div>
+      </div>
+      <p class="dbody" style="padding-top:10px" id="roNote"></p>
+      <div class="note" id="randNote" style="display:none;margin-top:12px">
+        <b>Why did Random ask fewer questions?</b> In <b>Auto episode</b> mode the random
+        baseline draws uniformly from the legal actions, which include “stop”, so it can
+        end an episode early — only some episodes reach the full budget. Its question count
+        is then <b>not</b> comparable with the greedy policy's. In <b>Interactive</b> mode the
+        random arm always asks the full budget, because stopping there is a manual action.
+      </div>
+      <div class="note" style="margin-top:12px">
+        No reinforcement-learning policy is served here. This demo runs the
+        information-gain and random baselines so the selection logic is inspectable;
+        learned policies are benchmarked offline.
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn" id="startBtn">Start screening</button>
+    </div>
+
+    <div id="startErr"></div>
+
+    <details>
+      <summary>Research context</summary>
+      <div class="dbody">
         <div class="kv">
-          <div class="box"><div class="k">Dataset</div><div class="v" id="s-data">—</div></div>
-          <div class="box"><div class="k">Label audit</div><div class="v" id="s-audit" style="font-size:13.5px">—</div></div>
-          <div class="box"><div class="k">Terminal test Brier</div><div class="v" id="s-brier">—</div></div>
-          <div class="box"><div class="k">Terminal test AUROC</div><div class="v" id="s-auroc">—</div></div>
-          <div class="box"><div class="k">DP sweep</div><div class="v" id="s-dp">—</div></div>
-          <div class="box"><div class="k">Greedy vs random (B=6)</div><div class="v" id="s-b6" style="font-size:12.5px">—</div></div>
+          <div class="box"><div class="k">Dataset</div><div class="v" id="ctxData">—</div></div>
+          <div class="box"><div class="k">Label audit</div><div class="v" id="ctxAudit" style="font-size:13px">—</div></div>
+          <div class="box"><div class="k">Test Brier</div><div class="v" id="ctxBrier">—</div></div>
+          <div class="box"><div class="k">Test AUROC</div><div class="v" id="ctxAuroc">—</div></div>
         </div>
-        <div class="meta" id="s-note"></div>
-        <div class="warnbox" id="s-h1">
-          <b>H1 (adaptive vs the exact best fixed subset):</b> <span>—</span>
-        </div>
-        <div class="warnbox" id="s-v6">
-          <b>V-6 (question-cost threshold):</b> <span>—</span>
+        <p style="margin-top:10px" id="ctxNote"></p>
+        <div id="ctxH1"></div>
+        <div id="ctxV6"></div>
+        <div class="note warn" style="margin-top:12px">
+          <b>Why does it often ask A1, A2, A3… in order?</b>
+          On this dataset the labels are a deterministic sum-threshold over the questions
+          themselves, so after a few answers every training record still consistent with the
+          answers given carries the same label. The support is then
+          <b>label-pure</b>, expected information gain is exactly zero for every remaining
+          question, and <code>argmax</code> has nothing to choose between — the policy falls
+          back to the lowest-numbered unanswered item. This is measured per step in
+          “Why this question?” via the backend's <code>criterion_vacuous</code> flag. It is a
+          property of the data, not a defect in this interface.
         </div>
       </div>
-    </div>
+    </details>
+  </section>
 
-    <!-- RIGHT COLUMN -->
-    <div>
-      <div class="card">
-        <h2>Risk estimate &amp; decision</h2>
-        <div id="stage">
-          <div class="empty">No episode running.<br>Choose a mode and press <b>▶ Start episode</b>.</div>
-        </div>
-        <div class="meta" style="margin-top:10px">risk = calibrated P(ASD traits) from the neural
-        predictor given the answers so far · decision = REFER if risk ≥ τ = 0.5 · research prototype, not diagnosis</div>
-        <div id="selPanel"></div>
-      </div>
-
-      <div class="card" style="margin-top:18px" id="traceCard">
-        <h2>Question trace</h2>
-        <div id="trace"><div class="empty" style="padding:22px">Answers appear here as you respond.</div></div>
-      </div>
+  <!-- ============================================== INTERVIEW SCREEN -->
+  <section class="card" id="quizScreen" hidden aria-labelledby="qHeading">
+    <div class="qhead">
+      <span class="qcount" id="qCount">Question 1</span>
+      <span class="qcode" id="qCode">Q1</span>
     </div>
-  </div>
+    <h2 class="qtext" id="qText" style="font:inherit">—</h2>
+    <div class="answers" id="answers">
+      <button class="ansbtn" data-value="0" type="button">
+        <span class="v">No / typical</span><span class="m">value 0</span>
+      </button>
+      <button class="ansbtn" data-value="1" type="button">
+        <span class="v">Yes / atypical</span><span class="m">value 1</span>
+      </button>
+    </div>
+    <div class="bar"><i id="progBar"></i></div>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+
+    <details id="whyBox">
+      <summary>Why this question?</summary>
+      <div class="dbody" id="whyBody"></div>
+    </details>
+
+    <details id="policyBox">
+      <summary>Policy details</summary>
+      <div class="dbody" id="policyBody"></div>
+    </details>
+
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn ghost" id="stopBtn" type="button">End session &amp; show result</button>
+      <button class="btn ghost" id="abortBtn" type="button">Discard</button>
+    </div>
+  </section>
+
+  <!-- ================================================= RESULT SCREEN -->
+  <section class="card" id="resultScreen" hidden aria-labelledby="resTitle">
+    <div class="card-title" id="resTitle">Screening result</div>
+    <div class="result-hero">
+      <div class="num" id="resValue">—</div>
+      <div class="lab" id="resLabel">Screening risk estimate</div>
+      <div class="ruler"><i id="resMark" style="left:0%"></i></div>
+      <div class="ruler-scale"><span>0.0</span><span>threshold <b id="resTau">—</b></span><span>1.0</span></div>
+      <div id="resDecision"></div>
+    </div>
+    <p class="dbody" style="text-align:center;margin-top:14px">
+      This result is intended for research screening and should not be interpreted
+      as a medical diagnosis.
+    </p>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn" id="newBtn" type="button">Start new screening</button>
+    </div>
+    <div id="resultErr"></div>
+
+    <details id="resWhy">
+      <summary>Why this question?</summary>
+      <div class="dbody" id="resWhyBody"></div>
+    </details>
+
+    <details>
+      <summary>Sensitivity of this result</summary>
+      <div class="dbody" id="resCfBody"></div>
+    </details>
+
+    <details>
+      <summary>Answer trace</summary>
+      <div class="dbody"><table class="trace" id="resTrace"></table></div>
+    </details>
+
+    <details>
+      <summary>Research context</summary>
+      <div class="dbody">
+        <div id="resResearch"></div>
+      </div>
+    </details>
+  </section>
 
   <footer>
-    Screening / referral-recommendation research prototype · not clinically validated · not a diagnostic tool<br>
-    Datasets: Saudi toddlers n=506 (labels are questionnaire-derived — shown in the audit panel) · threshold τ = 0.5 · budget B = 6<br>
-    No question-cost threshold is in force: the V-6 gate is unsigned, so stopping here is manual and the episode always runs the full budget unless you stop it.
+    <p>This research prototype is intended for screening research and does not
+    provide a medical diagnosis.</p>
+    <p id="footMeta"></p>
+    <p>Screening / referral-research prototype · not clinically validated ·
+    not a diagnostic tool.</p>
   </footer>
 </div>
-<div id="toast"></div>
 
 <script>
-let mode='interactive', policy='greedy', sid=null, asked=0, liveTrace=[];
-const BUDGET=6;
-const $=id=>document.getElementById(id);
+"use strict";
+/* ===========================================================================
+   Adaptive Autism Screening — demo front end.
 
-function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3200);}
-function setMode(m){mode=m;$('m-int').classList.toggle('on',m==='interactive');$('m-auto').classList.toggle('on',m==='auto');}
-function setPolicy(p){
-  policy=p;
-  $('p-greedy').classList.toggle('on',p==='greedy');
-  $('p-random').classList.toggle('on',p==='random');
-  $('randNote').style.display = p==='random' ? '' : 'none';
+   Backend contract (unchanged):
+     GET  /api/meta             -> {budget, tau, n_items, items[], dataset,
+                                    circularity, policies_available[], offline{}}
+     POST /api/session/start    {mode, policy}
+                               -> {session_id, mode, budget, tau, policy,
+                                   question{index,code,text}, belief, asked,
+                                   selection{...}}         (interactive)
+                               -> {session_id, ..., result{...}}      (auto)
+     POST /api/session/answer   {session_id, value|stop}
+                               -> {finished:false, belief_before, belief_after,
+                                   trace_step, asked, next{...}, selection{...}}
+                               -> {finished:true, result{...}}
+
+   Every budget, policy list, threshold and explanation shown here is read from
+   those responses. There is deliberately NO hard-coded budget constant.
+   =========================================================================== */
+
+const $ = id => document.getElementById(id);
+
+/* ---- presentation metadata -------------------------------------------------
+   The backend exposes policy *ids* but no human labels or descriptions, so the
+   wording for each known id lives here in one place. The list of selectable
+   policies always comes from meta.policies_available; an id not in this table
+   still renders (falling back to the raw id) rather than disappearing. */
+const POLICY_PRESENTATION = {
+  greedy: {
+    label: 'Greedy Information Gain',
+    desc: 'Selects the unanswered question expected to reduce uncertainty the most.',
+    kind: 'Heuristic'
+  },
+  random: {
+    label: 'Random Fixed-Length',
+    desc: 'Selects unanswered questions randomly, asking the full budget every time.',
+    kind: 'Heuristic'
+  },
+  beta_greedy: {
+    label: 'Beta-Greedy / EVOI',
+    desc: 'Uses an expected-information-value heuristic to prioritize questions.',
+    kind: 'Heuristic'
+  },
+  dqn: {
+    label: 'DQN',
+    desc: 'Uses a learned action-value policy.',
+    kind: 'Learned policy'
+  }
+};
+const MODE_PRESENTATION = {
+  interactive: {
+    label: 'Interactive interview',
+    desc: 'Answer each question yourself and watch the estimate update after every reply.'
+  },
+  auto: {
+    label: 'Auto episode',
+    desc: 'Replay a complete episode from the held-out test split without input.'
+  }
+};
+
+const state = {
+  meta: null,
+  policy: null,
+  mode: 'interactive',
+  sessionId: null,
+  asked: 0,
+  liveTrace: [],
+  policyLabel: '—',
+  lastSelection: null,
+  lastQuestionCode: null,
+  finished: false
+};
+
+/* ------------------------------------------------------------------ helpers */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function busy(b,label){const s=$('startBtn');if(b){s.dataset.h=s.innerHTML;s.disabled=true;
-  if(label)s.innerHTML='<span class="spin"></span> '+label;}
-  else{s.disabled=false;s.innerHTML=s.dataset.h||'▶ Start episode';}}
-
-async function api(path, body){
-  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
-  const j=await r.json().catch(()=>({error:'bad response'}));
-  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
-  return j;
+function num(v, d) {
+  return (v == null || Number.isNaN(v)) ? '—' : Number(v).toFixed(d == null ? 3 : d);
 }
+/* Backend messages are developer-facing (exception strings). Show a calm,
+   human sentence and keep the raw text behind a disclosure so a stack trace or
+   filesystem path is never the first thing on screen. */
+function friendlyError(err) {
+  const raw = String((err && err.message) || err || 'Unknown error');
+  if (/session/i.test(raw) && /unknown|start a new/i.test(raw))
+    return 'This screening session is no longer available.';
+  if (/already finished/i.test(raw))
+    return 'This session has already finished.';
+  if (/no pending question/i.test(raw))
+    return 'No question is waiting for an answer.';
+  if (/value must be/i.test(raw))
+    return 'That answer is not one of the available options.';
+  if (/at least one question/i.test(raw))
+    return 'Answer at least one question before ending the session.';
+  return 'Something went wrong while processing this answer.';
+}
+function showError(hostId, err) {
+  const raw = String((err && err.message) || err || '');
+  $(hostId).innerHTML =
+    '<div class="err"><strong>' + esc(friendlyError(err)) + '</strong>' +
+    '<details><summary>Technical details</summary><pre>' + esc(raw) + '</pre></details>' +
+    '</div>';
+}
+function clearError(hostId) { $(hostId).innerHTML = ''; }
 
-function renderH1(o){
-  const h1=o&&o.h1;
-  if(!h1||!Object.keys(h1).length){$('s-h1').querySelector('span').textContent='run Step 5';return;}
-  const parts=Object.keys(h1).map(b=>{
-    const r=h1[b];
-    if(r.greedy==null||r.fixed==null) return `B${b} —`;
-    return `B${b} ${r.supported?'✓':'✗'}`;
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
   });
-  const failed=Object.keys(h1).filter(b=>h1[b].supported===false);
-  $('s-h1').querySelector('span').innerHTML=
-    parts.join(' &nbsp;')+
-    (failed.length
-      ? `<br>✗ <b>not supported at B = ${failed.join(', ')}</b> — the exact best fixed subset has lower
-         held-out Brier than every adaptive arm (greedy, Beta-prior EVOI, DQN). A lower Brier is better,
-         so the fixed subset <i>wins</i> there.`
-      : `<br>✓ adaptive beats the exact best fixed subset at every measured budget.`);
+  let payload = {};
+  try { payload = await res.json(); } catch (e) { payload = {}; }
+  if (!res.ok) throw new Error(payload.error || ('HTTP ' + res.status));
+  return payload;
 }
 
-function renderV6(o){
-  const v=o&&o.v6;
-  const el=$('s-v6').querySelector('span');
-  if(!v){el.textContent='no Step-6 artifact found';return;}
-  const bits=[];
-  bits.push('<b>NOT signed off.</b> No threshold is selected, so this demo has no cost-aware stopping rule.');
-  if(v.support_evoi_median!=null){
-    bits.push(`Measured best-question value on the test split: median
-      ${Number(v.support_evoi_median).toFixed(4)} (support posterior) vs
-      ${Number(v.predictor_evoi_median).toFixed(4)} (neural predictor) — same units, so a single λ
-      scale applies to both. An earlier claim that these were two orders of magnitude apart was
-      measured and withdrawn.`);
+function setBusy(btn, busy, label) {
+  if (busy) {
+    btn.dataset.label = btn.dataset.label || btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>' + esc(label || 'Working…');
+  } else {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.label || btn.textContent;
   }
-  if(v.saturated_at_zero_lambda){
-    bits.push(`At λ = 0 the objective <b>saturates</b> (V* = 1.000000): the support becomes label-pure
-      after ~4 questions, so early stopping there measures the label rule, not interview sufficiency.`);
+}
+function setStatus(msg, busy) {
+  $('status').innerHTML = busy
+    ? '<span class="spin"></span>' + esc(msg)
+    : esc(msg || '');
+}
+
+/* ------------------------------------------------------------- start screen */
+function renderOptions() {
+  const ids = (state.meta && state.meta.policies_available) || [];
+  state.policy = state.policy && ids.includes(state.policy) ? state.policy : (ids[0] || null);
+  state.policyLabel = state.policy
+    ? ((POLICY_PRESENTATION[state.policy] || {}).label || state.policy)
+    : '—';
+
+  $('policyOpts').innerHTML = ids.map(id => {
+    const p = POLICY_PRESENTATION[id] || { label: id, desc: 'Provided by the backend.' };
+    return '<button type="button" class="opt" data-policy="' + esc(id) + '" ' +
+      'aria-pressed="' + (id === state.policy) + '">' +
+      '<span class="dot" aria-hidden="true"></span><span>' +
+      '<span class="lbl">' + esc(p.label) + '</span>' +
+      '<span class="desc">' + esc(p.desc) + '</span></span></button>';
+  }).join('') || '<p class="dbody">No policy is currently exposed by the backend.</p>';
+
+  $('modeOpts').innerHTML = Object.keys(MODE_PRESENTATION).map(m => {
+    const v = MODE_PRESENTATION[m];
+    return '<button type="button" class="opt" data-mode="' + m + '" ' +
+      'aria-pressed="' + (m === state.mode) + '">' +
+      '<span class="dot" aria-hidden="true"></span><span>' +
+      '<span class="lbl">' + esc(v.label) + '</span>' +
+      '<span class="desc">' + esc(v.desc) + '</span></span></button>';
+  }).join('');
+
+  const m = state.meta || {};
+  $('roBudget').textContent = m.budget != null ? m.budget + ' questions' : '—';
+  $('roItems').textContent = m.n_items != null ? m.n_items + ' items' : '—';
+  $('roTau').textContent = m.tau != null ? 'τ = ' + m.tau : '—';
+  $('roNote').textContent = m.budget != null && m.n_items != null
+    ? 'This run will ask up to ' + m.budget + ' of the ' + m.n_items +
+      ' instrument questions. Both figures come from the backend.'
+    : '';
+
+  $('chipPolicy').hidden = false;
+  $('chipBudget').hidden = false;
+  $('chipPolicy').innerHTML = 'Policy <b>' + esc(state.policyLabel) + '</b>';
+  $('chipBudget').innerHTML = 'Budget <b>' + esc(m.budget != null ? m.budget : '—') + '</b>';
+
+  // The random-stop disclosure is shown only for the random arm, because it is a
+  // property of that baseline (and only in Auto mode, as the note explains).
+  $('randNote').style.display = state.policy === 'random' ? '' : 'none';
+}
+function renderPolicyDetails() {
+  const p = state.policy ? (POLICY_PRESENTATION[state.policy] || {}) : {};
+  const m = state.meta || {};
+  const rows = [
+    ['Policy', p.label || state.policy || '—'],
+    ['Type', p.kind || '—'],
+    ['Questions allowed', m.budget != null ? String(m.budget) : '—'],
+    ['Instrument size', m.n_items != null ? m.n_items + ' items' : '—'],
+    ['Stopping', 'Budget-limited. Ending early is a manual action.']
+  ];
+  $('policyBody').innerHTML =
+    '<div class="kv">' + rows.map(r =>
+      '<div class="box"><div class="k">' + esc(r[0]) + '</div><div class="v" ' +
+      'style="font-size:13px">' + esc(r[1]) + '</div></div>').join('') + '</div>' +
+    '<p style="margin-top:10px">' + esc(p.desc || '') + '</p>';
+}
+
+/* ------------------------------------------- explainability (backend data only) */
+function renderWhy(sel, questionCode, hostId) {
+  const body = $(hostId);
+  if (!sel) { body.innerHTML = '<p>No selection diagnostic was returned for this step.</p>'; return; }
+
+  if (sel.applicable === false) {
+    body.innerHTML =
+      '<p>This policy draws uniformly from the unanswered items, so it has no ' +
+      'scoring criterion to report.</p>';
+    return;
   }
-  el.innerHTML=bits.join('<br>');
-}
-
-async function loadMeta(){
-  try{
-    const m=await fetch('/api/meta').then(r=>r.json());
-    const d=m.dataset||{};
-    $('s-data').textContent=(d.n??'—')+' rows';
-    const c=m.circularity||{};
-    $('s-audit').textContent=c.classification?`${c.classification} · score ≥ ${c.threshold}`:'—';
-    const o=m.offline||{};
-    $('s-brier').textContent=o.test_brier!=null?Number(o.test_brier).toFixed(4):'run Step 2';
-    $('s-auroc').textContent=o.test_auroc!=null?Number(o.test_auroc).toFixed(4):'run Step 2';
-    $('s-dp').textContent=o.dp_runs?`${o.dp_runs} runs · ${o.dp_all_optimal?'all optimal':'see CSV'}`:'run Step 2';
-    const b=o.b6;
-    $('s-b6').textContent=b&&b.policy_greedy_brier!=null
-      ?`greedy ${Number(b.policy_greedy_brier).toFixed(3)} · random ${Number(b.policy_random_brier).toFixed(3)}`:'run Step 3';
-    $('s-note').textContent=`train/val/test held-out split · class balance ${d.positive}/${d.negative} · τ=${m.tau} · B=${m.budget}`;
-    renderH1(o); renderV6(o);
-  }catch(e){/* panel stays at '—' */}
-}
-
-function gaugeHTML(p,dec,extra){
-  const R=80,C=2*Math.PI*R, off=C*(1-p);
-  return `
-  <div class="gauge">
-    <svg width="190" height="190" viewBox="0 0 190 190">
-      <defs><linearGradient id="gg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#5b8cff"/><stop offset="100%" stop-color="#8a5bff"/></linearGradient></defs>
-      <circle class="track" cx="95" cy="95" r="${R}" stroke-width="14"/>
-      <circle class="bar" cx="95" cy="95" r="${R}" stroke-width="14"
-        stroke-dasharray="${C}" stroke-dashoffset="${off}"/>
-    </svg>
-    <div class="gval"><div class="num">${(p*100).toFixed(1)}%</div><div class="lab">risk score</div></div>
-  </div>
-  <div class="decision"><span class="d ${dec==='REFERRAL_RECOMMENDED'?'d-ref':'d-nore'}">${dec.replace(/_/g,' ')}</span></div>
-  <div class="meta">${extra}</div>`;
-}
-
-function selHTML(sel,label){
-  if(!sel||sel.applicable===false)
-    return `<div class="selbox"><b>Selection</b> (${label}): the random baseline has no
-      criterion to inspect — it draws uniformly from the unasked items.</div>`;
-  if(sel.support_size===null)
-    return `<div class="selbox"><b>Selection</b> (${label}): no legal item left to score.</div>`;
-  const vac=sel.criterion_vacuous;
-  const pills=[];
-  pills.push(`<span class="pill ${sel.support_is_pure?'warn':'good'}">support ${sel.support_is_pure?'label-pure':'label-mixed'}</span>`);
-  if(sel.posterior!=null)
-    pills.push(`<span class="pill">label rate in support ${Number(sel.posterior).toFixed(3)}</span>`);
-  if(sel.ig_spread!=null)
-    pills.push(`<span class="pill ${vac?'warn':''}">IG spread ${Number(sel.ig_spread).toFixed(6)}</span>`);
-  if(sel.tie_at_max!=null&&sel.n_legal)
-    pills.push(vac
-      ? `<span class="pill warn">all ${sel.n_legal} items score identically</span>`
-      : `<span class="pill">${sel.tie_at_max===1?'unique best item':sel.tie_at_max+' of '+sel.n_legal+' tied at the top'}</span>`);
-  const why=vac
-    ? `<b>Every legal item scores exactly 0 information gain</b>, so <code>argmax</code> has nothing
-       to choose between and the policy falls back to the lowest-numbered unasked item. This is a
-       <b>vacuous criterion, not a genuine tie</b>: the support is
-       ${sel.support_is_pure?'<b>label-pure</b>':'degenerate'} — all
-       ${sel.n_pos} of ${sel.support_size} training records still consistent with your answers are
-       positive, so the label is already pinned down and no remaining question can add information.`
-    : `Information gain differs across legal items, so this pick is
-       <b>informative</b>${sel.tie_at_max>1?` — ${sel.tie_at_max} of ${sel.n_legal} items tie at the top`:''}.`;
-  return `<div class="selbox ${vac?'degenerate':''}">
-    <b>Selection</b> (${label}) ${pills.join('')}
-    <div style="margin-top:8px">${why}</div>
-    <div class="kv">
-      <div class="box"><div class="k">Support size</div><div class="v">${sel.support_size}</div></div>
-      <div class="box"><div class="k">Positives in support</div><div class="v">${sel.n_pos}</div></div>
-      <div class="box"><div class="k">IG spread</div><div class="v">${sel.ig_spread==null?'—':Number(sel.ig_spread).toFixed(6)}</div></div>
-    </div>
-  </div>`;
-}
-
-function setSel(sel,label){
-  $('selPanel').innerHTML = sel ? selHTML(sel,label) : '';
-}
-
-function selSummaryHTML(s){
-  if(!s||!s.steps_diagnosed) return '';
-  const v=s.steps_criterion_vacuous, p=s.steps_support_pure, n=s.steps_diagnosed;
-  const head=v>0
-    ? `<b>${v} of ${n}</b> selection steps had a <b>vacuous</b> criterion (IG identical across every
-       legal item), so the order shown above was partly the fallback rule rather than a ranking.`
-    : `All ${n} selection steps had a discriminating criterion.`;
-  return `<div class="selbox ${v>0?'degenerate':''}">
-    <b>Episode summary</b>
-    <div style="margin-top:6px">${head}</div>
-    <div class="kv">
-      <div class="box"><div class="k">Vacuous steps</div><div class="v">${v}/${n}</div></div>
-      <div class="box"><div class="k">Label-pure steps</div><div class="v">${p}/${n}</div></div>
-      <div class="box"><div class="k">Support at stop</div><div class="v">${s.support_size_at_stop==null?'—':s.support_size_at_stop}</div></div>
-    </div>
-  </div>`;
-}
-
-function questionHTML(q){
-  return `<div class="qcard">
-    <span class="qcode">${q.code}</span>
-    <div class="qtext">${q.text}</div>
-    <div class="ans">
-      <button onclick="answer(0)">0 — Typical / No</button>
-      <button onclick="answer(1)">1 — Atypical / Yes</button>
-    </div>
-  </div>`;
-}
-
-function renderTrace(trace, live){
-  if(!trace||!trace.length){$('trace').innerHTML='<div class="empty" style="padding:22px">Answers appear here as you respond.</div>';return;}
-  let h='<div class="trace-head"><span>#</span><span>Item</span><span>Ans</span><span>Belief before → after</span><span>Change</span><span>Selection</span></div>';
-  for(const t of trace){
-    const d=t.belief_after-t.belief_before;
-    const cls=Math.abs(d)<0.005?'flat':(d>0?'up':'down');
-    const sym=Math.abs(d)<0.005?'·':(d>0?'▲':'▼');
-    const s=t.selection;
-    let sel='—';
-    if(s&&s.applicable!==false){
-      if(s.support_size===null) sel='no item left';
-      else if(s.criterion_vacuous) sel='<span style="color:var(--warn)">vacuous</span>';
-      else sel='<span style="color:var(--good)">informative</span>';
-    }else if(s){ sel='n/a (random)'; }
-    h+=`<div class="trow"><span>${t.step}</span><span>${t.item}</span><span>${t.value}</span>
-      <span>${t.belief_before.toFixed(3)} <span class="arrow">→</span> <b>${t.belief_after.toFixed(3)}</b></span>
-      <span class="${cls}">${sym} ${Math.abs(d).toFixed(3)}</span>
-      <span>${sel}</span></div>`;
+  if (sel.support_size == null) {
+    body.innerHTML = '<p>No unanswered item remained to score.</p>';
+    return;
   }
-  $('trace').innerHTML=h;
+
+  const vacuous = sel.criterion_vacuous;
+  const tiles = [
+    ['Candidate items', sel.n_legal],
+    ['Support size', sel.support_size],
+    ['Label rate in support', sel.posterior == null ? '—' : num(sel.posterior)],
+    ['Score spread', sel.ig_spread == null ? '—' : num(sel.ig_spread, 6)]
+  ];
+
+  let headline;
+  if (vacuous) {
+    headline =
+      '<div class="note warn"><b>The criterion did not discriminate between the ' +
+      'remaining questions.</b> Every candidate scored identically, so the policy ' +
+      'fell back to its default ordering rather than ranking them.</div>';
+  } else {
+    headline =
+      '<div class="note"><b>Selected because it ranked highest among the remaining ' +
+      'questions on information gain</b>' +
+      (sel.tie_at_max > 1 ? ', together with ' + (sel.tie_at_max - 1) + ' other item(s) tied at the top' : '') +
+      '.</div>';
+  }
+
+  let detail =
+    '<p>Every figure below is returned by the backend selection diagnostic for step "' +
+    esc(questionCode || 'current question') + '".</p>' +
+    '<div class="kv">' + tiles.map(t =>
+      '<div class="box"><div class="k">' + esc(t[0]) + '</div><div class="v" ' +
+      'style="font-size:13px">' + esc(t[1]) + '</div></div>').join('') + '</div>';
+
+  if (sel.support_is_pure === true) {
+    detail +=
+      '<p style="margin-top:10px">All ' + esc(sel.support_size) +
+      ' training records still consistent with the answers so far carry the same label, ' +
+      'so no remaining question can add information. The fallback ordering is a ' +
+      'property of a label-pure support, not a failure of the interface.</p>';
+  }
+  const top = sel.top_items;
+  if (top && top.length) {
+    detail += '<p style="margin-top:10px"><b>Top scoring item(s):</b> ' +
+      top.map(t => esc(t.code) + ' (score ' + num(t.ig, 6) + ')').join(', ') + '</p>';
+  }
+  body.innerHTML = headline + detail;
 }
 
-function renderCF(cf){
-  if(!cf) return `<div class="cf robust"><b>Robust decision.</b> Flipping any single answer would <b>not</b> change the recommendation.</div>`;
-  return `<div class="cf"><b>Counterfactual:</b> if the answer to <b>${cf.item}</b> were
-    <b>${cf.flipped_value}</b> instead of <b>${cf.original_value}</b>, the risk would move to
-    <b>${cf.new_p.toFixed(3)}</b> and the decision would flip. (minimal single-answer flip)</div>`;
+/* ------------------------------------------------------------ interview flow */
+function showQuestion(q, askedSoFar, beliefNote) {
+  const budget = state.meta && state.meta.budget;
+  $('qCount').textContent = 'Question ' + (askedSoFar + 1) +
+    (budget != null ? ' of ' + budget : '');
+  $('qCode').textContent = q.code;
+  $('qText').textContent = q.text;
+  state.lastQuestionCode = q.code;
+  const pct = (budget ? Math.min(100, (askedSoFar / budget) * 100) : 0);
+  $('progBar').style.width = pct + '%';
+  if (beliefNote) setStatus(beliefNote, false);
+}
+function setAnswersEnabled(on) {
+  document.querySelectorAll('.ansbtn').forEach(b => { b.disabled = !on; });
 }
 
-async function start(){
-  try{
-    busy(true, mode==='auto'?'running episode…':'preparing…');
-    const r=await api('/api/session/start',{mode,policy});
-    sid=r.session_id; asked=0; $('prog').style.width='0%';
-    $('stopBtn').disabled = mode==='auto';
-    $('resetBtn').disabled=false;
-    if(mode==='auto'){
-      const res=r.result;
-      $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
-        `policy: ${r.policy} · asked ${res.asked} of ${BUDGET} allowed · stop: ${res.stop_reason}<br>true label (held out): ${res.true_label===1?'ASD-positive':'ASD-negative'}`);
-      renderTrace(res.trace);
-      setCF(res.counterfactual);
-      setSel(null,'');
-      $('prog').style.width=(res.asked/BUDGET*100)+'%';
-    }else{
-      liveTrace=[];
-      $('stage').innerHTML=questionHTML(r.question)+
-        `<div class="meta">current risk (no answers yet): <b>${r.belief.toFixed(3)}</b></div>`;
-      renderTrace(null);
-      setCF(null);
-      setSel(r.selection,'choosing '+r.question.code);
+async function start() {
+  clearError('startErr');
+  if (!state.policy) { showError('startErr', new Error('No policy available')); return; }
+  setBusy($('startBtn'), true, 'Starting…');
+  setStatus('Preparing session…', true);
+  try {
+    const r = await api('/api/session/start', { mode: state.mode, policy: state.policy });
+    state.sessionId = r.session_id;
+    state.asked = 0;
+    state.liveTrace = [];
+    state.finished = false;
+    state.lastSelection = null;
+
+    $('startScreen').hidden = true;
+    $('resultScreen').hidden = true;
+    $('quizScreen').hidden = false;
+    renderPolicyDetails();
+
+    if (state.mode === 'auto') {
+      const res = r.result;
+      state.finished = true;
+      showResult(res, r.policy);
+    } else {
+      state.lastSelection = r.selection;
+      renderWhy(r.selection, r.question.code, 'whyBody');
+      showQuestion(r.question, 0, 'Current estimate before any answers: ' + num(r.belief, 3));
+      setAnswersEnabled(true);
     }
-  }catch(e){toast('⚠ '+e.message);}
-  finally{busy(false);}
+  } catch (e) {
+    showError('startErr', e);
+  } finally {
+    setBusy($('startBtn'), false);
+    setStatus('', false);
+  }
 }
 
-async function answer(v){
-  try{
-    document.querySelectorAll('.ans button').forEach(b=>b.disabled=true);
-    const r=await api('/api/session/answer',{session_id:sid,value:v});
-    if(!r.finished){ asked=r.asked; liveTrace.push(r.trace_step); }
-    $('prog').style.width=((r.finished?r.result.asked:asked)/BUDGET*100)+'%';
-    if(r.finished){
-      const res=r.result;
-      $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
-        `asked ${res.asked} of ${BUDGET} allowed · stop: ${res.stop_reason}`);
-      renderTrace(res.trace);
-      setCF(res.counterfactual);
-      setSel(res.selection_summary||null,'');
-      if(res.selection_summary) $('selPanel').innerHTML=selSummaryHTML(res.selection_summary);
-      $('stopBtn').disabled=true;
-    }else{
-      $('stage').innerHTML=questionHTML(r.next)+
-        `<div class="meta">last answer ${r.trace_step.item}=${r.trace_step.value} ·
-         risk ${r.belief_before.toFixed(3)} → <b>${r.belief_after.toFixed(3)}</b> · question ${asked}/${BUDGET}</div>`;
-      renderTrace(liveTrace);
-      setSel(r.selection,'choosing '+r.next.code);
-      $('stopBtn').disabled=false;
+async function answer(value) {
+  if (!state.sessionId || state.finished) return;
+  setAnswersEnabled(false);          // prevents accidental double submission
+  setStatus('Selecting next question…', true);
+  try {
+    const r = await api('/api/session/answer', { session_id: state.sessionId, value: value });
+    if (r.finished) {
+      state.finished = true;
+      showResult(r.result, state.policy);
+      return;
     }
-  }catch(e){toast('⚠ '+e.message);}
-  finally{document.querySelectorAll('.ans button').forEach(b=>b.disabled=false);}
+    state.asked = r.asked;
+    state.liveTrace.push(r.trace_step);
+    state.lastSelection = r.selection;
+    renderWhy(r.selection, r.next.code, 'whyBody');
+    showQuestion(r.next, r.asked,
+      'Last answer ' + r.trace_step.item + ' = ' + r.trace_step.value +
+      ' · estimate ' + num(r.belief_before, 3) + ' → ' + num(r.belief_after, 3));
+    setAnswersEnabled(true);
+  } catch (e) {
+    showError('startErr', e);
+    setAnswersEnabled(true);
+  } finally {
+    setStatus('', false);
+  }
 }
 
-async function stopEarly(){
-  try{
-    const r=await api('/api/session/answer',{session_id:sid,stop:true});
-    if(r.finished){
-      const res=r.result;
-      $('prog').style.width=(res.asked/BUDGET*100)+'%';
-      $('stage').innerHTML=gaugeHTML(res.p_hat,res.decision,
-        `stopped early after ${res.asked} of ${BUDGET} allowed questions (stopped by you, not by a cost rule)`);
-      renderTrace(res.trace);
-      setCF(res.counterfactual);
-      $('selPanel').innerHTML=selSummaryHTML(res.selection_summary);
-      $('stopBtn').disabled=true;
-    }
-  }catch(e){toast('⚠ '+e.message);}
+async function stopEarly() {
+  if (!state.sessionId || state.finished) return;
+  $('stopBtn').disabled = true;
+  setAnswersEnabled(false);
+  setStatus('Updating screening estimate…', true);
+  try {
+    const r = await api('/api/session/answer', { session_id: state.sessionId, stop: true });
+    state.finished = true;
+    showResult(r.result, state.policy);
+  } catch (e) {
+    showError('startErr', e);
+    $('stopBtn').disabled = false;
+    setAnswersEnabled(true);
+  } finally {
+    setStatus('', false);
+  }
 }
 
-function setCF(cf){
-  const old=$('traceCard').querySelector('.cf'); if(old) old.remove();
-  if(cf!==null) $('traceCard').insertAdjacentHTML('beforeend',renderCF(cf));
+/* --------------------------------------------------------------- result view */
+function showResult(res, policyId) {
+  const m = state.meta || {};
+  const tau = m.tau != null ? m.tau : null;
+  const p = res.p_hat;
+
+  $('quizScreen').hidden = true;
+  $('resultScreen').hidden = false;
+
+  $('resValue').textContent = num(p, 3);
+  $('resLabel').textContent = 'Screening risk estimate (model score)';
+  $('resTau').textContent = tau != null ? String(tau) : '—';
+  $('resMark').style.left = (Math.max(0, Math.min(1, p)) * 100) + '%';
+
+  const isRef = res.decision === 'REFERRAL_RECOMMENDED';
+  $('resDecision').innerHTML =
+    '<span class="decision ' + (isRef ? 'ref' : 'noref') + '">' +
+    esc(String(res.decision || '').replace(/_/g, ' ').toLowerCase()) + '</span>';
+
+  // Summary tiles — only values the backend actually returned.
+  const tiles = [
+    ['Questions asked', res.asked != null ? res.asked + (m.budget != null ? ' of ' + m.budget : '') : '—'],
+    ['Items covered', res.items_asked && res.items_asked.length ? res.items_asked.join(', ') : '—'],
+    ['Session ended by', String(res.stop_reason || '').replace(/_/g, ' ') || '—']
+  ];
+  $('resResearch').innerHTML =
+    '<div class="kv">' + tiles.map(t =>
+      '<div class="box"><div class="k">' + esc(t[0]) + '</div><div class="v" ' +
+      'style="font-size:13px">' + esc(t[1]) + '</div></div>').join('') + '</div>' +
+    '<p style="margin-top:10px">The estimate is a model score produced by the ' +
+    'development predictor from the answers given. It has not been clinically ' +
+    'validated and is not a diagnosis.</p>';
+
+  renderWhy(res.selection_summary ? null : state.lastSelection,
+    state.lastQuestionCode, 'resWhyBody');
+
+  const cf = res.counterfactual;
+  $('resCfBody').innerHTML = cf
+    ? '<p>If the answer to <b>' + esc(cf.item) + '</b> were <b>' + esc(cf.flipped_value) +
+      '</b> instead of <b>' + esc(cf.original_value) + '</b>, the estimate would move to <b>' +
+      num(cf.new_p, 3) + '</b>. This is the smallest single-answer change that alters ' +
+      'the screening decision.</p>'
+    : '<p>No single-answer change alters this screening decision.</p>';
+
+  renderTrace(res.trace);
+  $('newBtn').focus();
 }
 
-function reset(){
-  sid=null; asked=0; liveTrace=[]; $('prog').style.width='0%';
-  $('stage').innerHTML='<div class="empty">No episode running.<br>Choose a mode and press <b>▶ Start episode</b>.</div>';
-  renderTrace(null); setCF(null); setSel(null,'');
-  $('stopBtn').disabled=true; $('resetBtn').disabled=true;
+function renderTrace(trace) {
+  const rows = (trace && trace.length) ? trace : [];
+  if (!rows.length) {
+    $('resTrace').innerHTML = '<p>No answer trace was returned for this session.</p>';
+    return;
+  }
+  $('resTrace').innerHTML =
+    '<thead><tr><th>#</th><th>Item</th><th>Answer</th>' +
+    '<th style="text-align:right">Estimate before</th>' +
+    '<th style="text-align:right">Estimate after</th></tr></thead><tbody>' +
+    rows.map(t => '<tr><td class="num">' + esc(t.step) + '</td><td>' + esc(t.item) +
+      '</td><td class="num">' + esc(t.value) + '</td><td class="num">' +
+      num(t.belief_before, 3) + '</td><td class="num">' + num(t.belief_after, 3) +
+      '</td></tr>').join('') + '</tbody>';
 }
+
+/* ----------------------------------------------------------------- reset */
+function resetAll() {
+  state.sessionId = null;
+  state.asked = 0;
+  state.liveTrace = [];
+  state.finished = false;
+  state.lastSelection = null;
+  state.lastQuestionCode = null;
+  $('quizScreen').hidden = true;
+  $('resultScreen').hidden = true;
+  $('startScreen').hidden = false;
+  $('progBar').style.width = '0%';
+  $('resValue').textContent = '—';
+  $('resDecision').innerHTML = '';
+  $('resResearch').innerHTML = '';
+  $('resCfBody').innerHTML = '';
+  $('resWhyBody').innerHTML = '';
+  $('resTrace').innerHTML = '';
+  $('whyBody').innerHTML = '';
+  setAnswersEnabled(false);
+  setStatus('', false);
+  clearError('startErr');
+  clearError('resultErr');
+  renderOptions();
+  $('startBtn').focus();
+}
+
+/* ------------------------------------------------------------- meta load */
+function renderContext() {
+  const m = state.meta || {};
+  const d = m.dataset || {};
+  const c = m.circularity || {};
+  const o = m.offline || {};
+  $('ctxData').textContent = (d.n != null ? d.n : '—') + ' rows';
+  $('ctxAudit').textContent = c.classification ? c.classification : '—';
+  $('ctxBrier').textContent = o.test_brier != null ? num(o.test_brier, 4) : 'not run';
+  $('ctxAuroc').textContent = o.test_auroc != null ? num(o.test_auroc, 4) : 'not run';
+  $('ctxNote').textContent =
+    'Development cohort ' + (d.name || '—') + ' · class balance ' +
+    (d.positive != null ? d.positive : '—') + '/' + (d.negative != null ? d.negative : '—') +
+    ' · label audit: ' + (c.exact_match != null ? 'exact match ' + num(c.exact_match, 4) : '—') +
+    '. The development labels are questionnaire-derived, which is a known limitation.';
+
+  const h1 = o.h1;
+  if (h1 && Object.keys(h1).length) {
+    const failed = Object.keys(h1).filter(b => h1[b] && h1[b].supported === false);
+    $('ctxH1').innerHTML = '<div class="note ' + (failed.length ? 'warn' : '') + '">' +
+      '<b>Adaptive selection vs the exact best fixed subset.</b> ' +
+      (failed.length
+        ? 'Adaptive selection is <b>not supported at B = ' + failed.join(', ') +
+          '</b> — the exhaustive best fixed subset ' +
+          'achieved lower held-out Brier at those budgets.'
+        : 'Supported at every measured budget.') + '</div>';
+  }
+  const v6 = o.v6;
+  if (v6) {
+    $('ctxV6').innerHTML = '<div class="note"><b>Question-cost threshold (V-6 gate is unsigned).</b> ' +
+      'No question-cost threshold is in force, so there is no cost-aware stopping rule: ' +
+      'ending a session early is a manual action.</div>';
+  }
+  $('footMeta').textContent =
+    'Development dataset: ' + (d.name || '—') + ' · instrument: ' +
+    (m.n_items != null ? m.n_items + ' Q-CHAT-10 items' : '—') +
+    ' · budget: ' + (m.budget != null ? m.budget : '—') +
+    ' · decision threshold τ = ' + (m.tau != null ? m.tau : '—') + '.';
+}
+
+async function loadMeta() {
+  try {
+    const res = await fetch('/api/meta');
+    state.meta = await res.json();
+  } catch (e) {
+    state.meta = {};
+    showError('startErr', e);
+  }
+  renderOptions();
+  renderContext();
+}
+
+/* ------------------------------------------------------------------ events */
+$('policyOpts').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-policy]');
+  if (!b) return;
+  state.policy = b.dataset.policy;
+  renderOptions();
+  renderPolicyDetails();
+});
+$('modeOpts').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-mode]');
+  if (!b) return;
+  state.mode = b.dataset.mode;
+  renderOptions();
+});
+$('startBtn').addEventListener('click', start);
+$('answers').addEventListener('click', ev => {
+  const b = ev.target.closest('.ansbtn');
+  if (b && !b.disabled) answer(Number(b.dataset.value));
+});
+$('stopBtn').addEventListener('click', stopEarly);
+$('abortBtn').addEventListener('click', resetAll);
+$('newBtn').addEventListener('click', resetAll);
 
 loadMeta();
 </script>

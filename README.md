@@ -31,7 +31,7 @@ Note: a venv created on Linux (e.g. under WSL) cannot be run from Windows cmd an
 # Windows:  .venv-win\Scripts\python -m pytest tests -q
 # Linux:    .venv/bin/python -m pytest tests -q
 ```
-Expected: **204 passed, 0 skipped** on CPU. Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+Expected: **487 passed, 0 skipped** on CPU. Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
 
 > **Test-count history.** The figure has been wrong in this file three times, in both
 > directions, so it is worth knowing how to check it rather than trusting it.
@@ -44,7 +44,7 @@ Expected: **204 passed, 0 skipped** on CPU. Useful flags: `-x` stop at first fai
 >   artifacts appeared missing.
 > - Later revisions quoted 126, then 163, then 191 as the suite grew with each
 >   correction pass. Each was correct when written.
-> - Current: **204 passed / 0 skipped.** Verify with the command above; the number is
+> - Current: **487 passed / 0 skipped.** Verify with the command above; the number is
 >   the point-in-time count, not a target.
 
 > **Disk-space gotcha (2026-10-01):** a plain `pip install -r requirements.txt` pulls the **CUDA** build of torch (~2 GB of nvidia wheels) and fails with `No space left on device` — `/tmp` is a 3.7 GB tmpfs. Install CPU-only torch instead:
@@ -66,6 +66,8 @@ python scripts\step5_policy_benchmark.py       # matched-budget benchmark + V*-V
 python scripts\step6_lambda_sweep.py           # lambda sweep — V-6 decision input
 python scripts\step7_rl_diagnosis.py           # bounded RL diagnosis (5 seeds x 4 episode budgets)
 python scripts\step8_evoi_scale_analysis.py    # EVOI distributions + stopping-rule sensitivity — V-6 decision input
+python scripts\step9_v4_v7_gates.py           # V-4/V-7 gate evidence + Polish provenance verification (metadata only)
+python scripts\step10_external_validation.py    # external validation on the sealed Polish cohort — currently BLOCKED, exits 2
 ```
 Scripts automatically use the real CSVs when present under `data/raw/` (every artifact records `"source": "real"`) and fall back to synthetic data for smoke-testing otherwise.
 
@@ -212,20 +214,20 @@ records = load_dataset("nz", synthetic=True)
 
 ## Repository layout — §8
 ```
-src/data/ingest.py, schema.py, dedupe.py, splits.py
+src/data/ingest.py, schema.py, dedupe.py, splits.py, provenance.py, qchat10_contract.py
 src/audits/circularity.py, leakage.py
 src/env/state.py, environment.py, costs.py
 src/solvers/exact_custom.py, exact_adapter.py
 src/models/masked_predictor.py
 src/policies/dqn.py, ppo.py, greedy.py, random_policy.py, irt_cat.py, dqn_cat.py, static_rfe.py, static_fixed.py, beta_greedy.py, replay.py
 src/explain/trace.py, counterfactual.py, shap_baseline.py
-src/eval/metrics.py, bootstrap.py, power.py, fwer.py, subgroup.py
+src/eval/metrics.py, bootstrap.py, power.py, fwer.py, subgroup.py, gates.py, external_validation.py, qchat10_subset.py
 src/ablation/runner.py
 configs/config.yaml (Hydra)
-scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py, scripts/step5_policy_benchmark.py, scripts/step6_lambda_sweep.py, scripts/step7_rl_diagnosis.py, scripts/step8_evoi_scale_analysis.py
+scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py, scripts/step5_policy_benchmark.py, scripts/step6_lambda_sweep.py, scripts/step7_rl_diagnosis.py, scripts/step8_evoi_scale_analysis.py, scripts/step9_v4_v7_gates.py, scripts/step10_external_validation.py
 scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (browser demo)
 docs/prisma/screening_worksheet.csv
-tests/ (204 tests, all passing)
+tests/ (487 tests, all passing)
 ```
 
 ## Key invariants — §9-11
@@ -256,7 +258,7 @@ Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/S
 
 ## Tests — §21
 ```
-pytest tests -q   # 204 tests
+pytest tests -q   # 487 tests
 ```
 24 P1-f Beta-prior / EVOI tests (`tests/test_p1f_beta_greedy.py` + 13 Step-7 RL-diagnosis tests (`tests/test_step7_rl_diagnosis.py`) + 36 Step-6 λ-sweep + canonical-split + beta_greedy + lambda_units_caveat tests (`tests/test_step6_lambda_sweep.py`) + 23 P1-d baseline + predictor-reproducibility tests (`tests/test_p1d_baselines.py`) + 28 RL training regressions (`tests/test_rl_training.py`) + 14 Step-5 benchmark contracts (`tests/test_step5_benchmark.py`) + 21 demo-behaviour audit regressions (`tests/test_demo_behavior_audit.py`) + 10 DP tractability invariants + 4 legal-action tests + 4 Step 3 artifact contracts + 4 reachable-state-count tests + 3 V-2 no-claim rule tests + 3 leakage tests + 2 budget-exhaustion + 2 counterfactual + 2 reward-bounds + 2 state-encoding + 8 single-test modules. All 204 pass; none skip.
 
@@ -339,3 +341,79 @@ Questionnaire-derived labels (Saudi, UCI Child, NZ toddler target; Polish is cli
 
 ## Terminology lock — §25
 Use screening / referral recommendation / risk estimate ; never diagnosis.
+
+---
+
+### 3b. V-4 / V-7 external validation (sealed cohort)
+
+```powershell
+.venv-win\Scripts\python scripts\step9_v4_v7_gates.py
+.venv-win\Scripts\python scripts\step10_external_validation.py
+```
+
+**Architecture — the sealed cohort never touches fitting:**
+
+```
+Saudi 506 (circular questionnaire labels)  ->  predictor / calibrator / RL policies   [DEVELOPMENT]
+                                                  frozen: n_items=10, binary, dim 41
+                                                        |
+                                                        v  (frozen, never refit)
+Polish 252 (clinician-established GROUP)     ->  external evaluation                [SEALED]
+                                                  25 ordinal items, dim 199
+```
+
+| Gate | Automated evidence | Human sign-off | State |
+|---|---|---|---|
+| **V-4** MDE + confirmatory family freeze | PASS | **OPEN** | **OPEN** |
+| **V-7** Polish denominator (252 vs 253) | PASS | **OPEN** | **OPEN** |
+| **V-7** Baseline 10 recomputation | OPEN | **OPEN** | **OPEN** |
+| External validation | — | — | **BLOCKED** |
+
+`step10` currently **exits 2** and generates no prediction. Two independent blockers:
+V-4/V-7 sign-off is outstanding, and the frozen Saudi predictor's declared feature
+contract (10 binary items, `dim 41`) does not match the Polish cohort (25 ordinal
+items, `dim 199`). The ordinal encoder (`m_list`) already exists in `encode_state`,
+`MaskedPredictor`, `DQNPolicy` and `PPOPolicy`, but `load_polish` does not populate
+it, and **no coercion is offered** — truncating a 4–6 level ordinal response into a
+binary slot would silently destroy information.
+
+Measured with the project's own audits:
+
+| Cohort | best threshold | exact match | classification |
+|---|---|---|---|
+| Polish `GROUP` (clinical) | — | **0.5437** | **Not circular** |
+| Saudi `Class` (questionnaire) | 4 | **1.0000** | Deterministic |
+
+Artifacts (metadata only, never participant rows):
+`results/polish_provenance_verification.json`, `results/v4_v7_validation_status.json`,
+`results/polish_external_validation.json`.
+
+`data/*.sav` is gitignored; `git ls-files data/` is empty, so no dataset and no
+participant identifier is tracked.
+
+### 3c. Calibration authority and the Polish decision
+
+**Calibration.** Research metrics use **isotonic**; the browser demo uses Platt.
+These are not in conflict — the demo's choice is deliberate (isotonic collapses to
+3 breakpoints on 95 validation records). The actual defect was that Step 2 never
+persisted its trained model, so the recorded isotonic metrics were unreproducible
+from disk. Fixed: Step 2 now writes
+`results/predictor_{saudi,uci_child}_v2_isotonic.{pt,pkl}` and records both
+SHA-256 digests in the metrics artifact. Re-running Step 2 reproduced every metric
+**bit-identically** (`test_brier` 0.009122572011964558 unchanged).
+
+| artefact | sha256 |
+|---|---|
+| `predictor_saudi_v2_isotonic.pt` | `2366a28353f77b19b628073b9f97393e3218a80e9643b93dd4456e58f02cf1d4` |
+| `predictor_saudi_v2_isotonic.pkl` | `a1978f274797b463c44b7c7a1b9b93a007b813f5e019a6534855865664583863` |
+
+**Polish compatibility — answered OPEN.** All 25 external items are ordinal
+(0 natively binary), and the cohort carries **no question wording**, so a
+Q-CHAT-10 subset cannot be verified. Recorded OPEN rather than guessed.
+
+* `POLISH_VALIDATION_DECISION.md` — three options compared; recommends **Option A**
+  (verified 10-item subset) as the only one that validates the system as built.
+  The decision is explicitly left to the supervisor.
+* `EVIDENCE_REQUESTS.md` — the three items only a person can close (Sollis
+  Baseline-10 specification, V-4 assumed SD, published instrument wording).
+* `scripts/step10_external_validation.py` still exits **2** with **no metrics**.

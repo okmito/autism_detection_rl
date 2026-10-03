@@ -119,9 +119,60 @@ def _ece(probs: np.ndarray, y: np.ndarray, n_bins: int = 10) -> float:
     return float(e)
 
 
+def _persist_predictor(pred, name: str) -> dict:
+    """Persist the trained predictor so its metrics are reproducible from disk.
+
+    Until now this function did not exist. ``_train_one`` trained a model, fitted
+    a calibrator on the validation split, computed metrics, and then *discarded
+    every weight*. ``results/predictor_*_metrics.json`` therefore described a model
+    that could not be reloaded, re-hashed, or checked - the numbers were not
+    reproducible from any artefact in the repository. The only persisted
+    predictor was the demo's Platt cache, which is a different calibration and a
+    different artefact, so it could not stand in for the research one.
+
+    The filename carries ``MaskedPredictor.VERSION`` so a semantics change cannot
+    silently reuse stale weights, and the caller records both SHA-256 digests in
+    the metrics artifact.
+    """
+    import hashlib
+    import pickle as _pickle
+
+    import torch
+
+    RESULTS.mkdir(exist_ok=True)
+    stem = f"predictor_{name}_v{MaskedPredictor.VERSION}_{pred.calibration}"
+    pt = RESULTS / f"{stem}.pt"
+    pk = RESULTS / f"{stem}.pkl"
+    torch.save(pred.model.state_dict(), pt)
+    with open(pk, "wb") as fh:
+        _pickle.dump(pred.calibrator, fh)
+
+    def _sha(path: Path) -> str:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    return {
+        "artifact_weights": str(pt.relative_to(REPO)),
+        "artifact_calibrator": str(pk.relative_to(REPO)),
+        "artifact_weights_sha256": _sha(pt),
+        "artifact_calibrator_sha256": _sha(pk),
+        "artifact_version": MaskedPredictor.VERSION,
+    }
+
+
 def _train_one(name: str, records, hidden=(128, 64), epochs=20, lr=1e-3,
                batch_size=32, seed: int = 0) -> dict:
-    """Train a MaskedMLP with fold-local calibration; return metrics + serializable model."""
+    """Train a MaskedMLP with fold-local calibration; return metrics + persisted model.
+
+    Calibration is fitted on the validation split only (spec §12: "no calibration
+    ... may use validation or external-test rows" is about *external-test* rows;
+    the fold-local rule here is train -> fit, val -> calibrate, test -> score
+    once). The fitted predictor is persisted so the reported metrics can be
+    regenerated from the artefacts on disk.
+    """
     real_data = name == "saudi" and SAUDI_CSV.exists() or (
         name == "uci_child" and UCI_CHILD_ARFF.exists()
     )
@@ -156,6 +207,10 @@ def _train_one(name: str, records, hidden=(128, 64), epochs=20, lr=1e-3,
     p_val, y_val = _terminal_probs(pred, val)
     brier_val = float(brier_score_loss(y_val, np.clip(p_val, 1e-6, 1 - 1e-6)))
 
+    # Persist BEFORE returning: metrics without a recoverable artefact are not
+    # reproducible, which is the defect this closes.
+    artifact = _persist_predictor(pred, name)
+
     return {
         "dataset": name,
         "source": source_tag,
@@ -182,6 +237,7 @@ def _train_one(name: str, records, hidden=(128, 64), epochs=20, lr=1e-3,
         "split_fingerprint": split_fingerprint(train, val, test),
         "config": str(REPO / "configs" / "config.yaml"),
         "git_sha": _git_sha(),
+        **artifact,
     }
 
 

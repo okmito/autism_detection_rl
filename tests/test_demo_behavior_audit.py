@@ -375,11 +375,23 @@ def test_frontend_states_v6_is_unsigned():
 
 
 def test_frontend_budget_wording_is_consistent():
-    """"asked 3 of 10" conflated the item pool with the budget of 6."""
+    """"asked 3 of 10" conflated the item pool with the budget of 6.
+
+    The frontend must additionally have NO hard-coded budget constant: the budget,
+    instrument size and threshold are all read from /api/meta so the UI cannot
+    drift from the backend configuration.
+    """
     html = (REPO / "scripts" / "demo_static" / "index.html").read_text(encoding="utf-8")
     assert "of 10 questions" not in html
     assert "of 10 ·" not in html
-    assert "of ${BUDGET} allowed" in html
+    # no hard-coded budget constant anywhere in the front end
+    assert "const BUDGET" not in html
+    assert "let BUDGET" not in html
+    assert "BUDGET =" not in html
+    # the budget is sourced from backend metadata
+    assert "/api/meta" in html
+    assert "policies_available" in html
+    assert "m.budget" in html or "meta.budget" in html
 
 
 def _load_demo_app():
@@ -407,9 +419,20 @@ def test_api_returns_continuous_risk(trained_platt):
 
 # ------------------------------------------------- 5. frontend rendering
 def test_frontend_renders_continuous_percent():
+    """The screening estimate must be shown as the continuous backend value.
+
+    It may not be bucketised into a coarse band or rounded to a whole percent,
+    because the backend returns a calibrated probability and rounding it would
+    misstate it.
+    """
     html = (REPO / "scripts" / "demo_static" / "index.html").read_text(encoding="utf-8")
-    assert "(p*100).toFixed(1)" in html, "frontend must render the continuous backend value"
-    assert "Math.round(p" not in html, "frontend must not bucketize the risk value"
+    # no bucketing / whole-percent rounding of the backend value
+    assert "Math.round(p" not in html
+    assert "Math.round(res.p_hat" not in html
+    assert "toFixed(0)" not in html
+    # the continuous value is rendered via the shared numeric formatter
+    assert "num(p, 3)" in html or "num(res.p_hat" in html
+    assert "function num(" in html
 
 
 # ------------------------------------------------- 6. isotonic still available

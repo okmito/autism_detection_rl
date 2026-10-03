@@ -23,7 +23,7 @@ audit, retained.
 | P0-10 | `nn.Linear` drew from torch's global RNG before the caller seeded it, so **every artifact was non-reproducible regardless of its recorded seed** | `src/models/masked_predictor.py` |
 | P1-e | The 400-episode DQN was an **undertrained network**; it needs ~2,000 | `POLICY_BENCHMARK_REPORT.md §A.5` |
 
-Test suite: 191 passing, 0 skipped. All artifacts reproducible from their recorded seed (wall-clock fields excepted).
+Test suite: 258 passing, 0 skipped. All artifacts reproducible from their recorded seed (wall-clock fields excepted).
 
 ## 0A. The two findings that change the research picture
 

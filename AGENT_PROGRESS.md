@@ -452,3 +452,54 @@ $ .venv/bin/python -c "from src.env.state import reachable_state_count; print(re
 - 2026-09-30 (env rebuild + real-data run): venv rebuilt, results/ regenerated from the real Saudi/UCI CSVs (`source: real` everywhere), no-claim test scope fixed to skip hidden dirs, all four living docs updated with real numbers. 43/43 tests pass (superseded count — see 2026-10-01). The 8 verification gates are unchanged — all remaining substantive work is gated on human/supervisor actions (V-1 licence, V-2 searches, V-4/V-6/V-7 sign-offs, V-5/V-9/V-10 not started).
 - 2026-10-01 (Parts 0+1): repo audit found **no RL policy had ever been trained** — `DQNPolicy.train_step` was never called and discarded its legal-action mask (bootstrap optimised toward illegal actions); `PPOPolicy` had no training method at all. Both fixed, replay buffer + training script added, 13 regression tests written. A third alleged defect (terminal next-state shapes breaking `torch.cat`) was investigated and **retracted** — `torch.cat(dim=0)` concatenates along dim 0, so the original code did not raise; do not repeat that claim. Environment rebuilt (CPU-only torch; `/tmp` tmpfs is too small for the CUDA build) and all three datasets restored — two of them as documented conversions. **67/67 tests pass**.
 - 2026-10-01 (Parts 2+3): **first real RL measurement.** `scripts/step5_policy_benchmark.py` benchmarks DQN/PPO/Greedy/Random/ExactDP at matched budgets B∈{1..6} with a shared evaluator, plus the V\*−V_emp optimality gap. **Result: greedy-IG attains the exact optimum (gap ≤0.013); DQN (~0.04–0.055) and PPO (0.015–0.138) do not — PPO is worse than random at B=5/B=6.** Negative result for RL on this task, reported as such. 12 benchmark tests added → **79/79 pass**. `POLICY_BENCHMARK_REPORT.md` written. Polish still sealed; 8 verification gates unchanged. **Top next steps: multi-seed variance, then V-6 (λ) — every current number is λ=0, so cost is unpriced and adaptive stopping is unexcused.**
+
+---
+
+## 2026-10-01 (eighth pass) — V-4 / V-7 validation phase
+
+Opened the external-validation phase against the sealed Polish cohort. It is
+correctly **blocked**, and no gate was removed to make it pass.
+
+### Dataset question resolved first
+
+`data/QCHAT_dataset2 mendeley.sav` was verified as the **same 252-participant
+cohort** already integrated as `data/raw/Q-CHAT Polish/polish_qchat.csv` — 252/252
+keys, 252/252 numeric agreement, identical schema and value-label vocabularies,
+0 duplicates. Its sha256 `7fed516f…` is the hash this repository already recorded
+for the verified `QCHAT_dataset1.sav` export, so the local `dataset2` filename is
+misleading. **Disposition: provenance evidence only, never ingested.**
+
+### Current gate states
+
+| Gate | Automated | Human sign-off | Overall |
+|---|---|---|---|
+| V-4 MDE + confirmatory family freeze | PASS | **OPEN** | **OPEN** |
+| V-7 Polish denominator (252 vs 253) | PASS | **OPEN** | **OPEN** |
+| V-7 Baseline 10 recomputation | OPEN | **OPEN** | **OPEN** |
+| External validation on the sealed cohort | — | — | **BLOCKED** |
+
+### Two blockers, independently sufficient
+
+1. V-4/V-7 human sign-off outstanding — the cohort stays sealed.
+2. Feature-contract mismatch: the frozen Saudi predictor declares 10 binary items
+   (`input_dim = 41`); the Polish cohort supplies 25 ordinal items
+   (`input_dim = 199`). `encode_state` and the model classes already accept
+   `m_list`, but `load_polish` never populates it. Coercion is refused by design.
+
+### Circularity contrast that motivates the whole phase
+
+| Cohort | exact match | classification |
+|---|---|---|
+| Polish `GROUP` (clinical) | 0.5437 | **Not circular** |
+| Saudi `Class` (questionnaire) | 1.0000 | Deterministic |
+
+### Commands
+
+```powershell
+.venv-win\Scripts\python scripts\step9_v4_v7_gates.py
+.venv-win\Scripts\python scripts\step10_external_validation.py   # exits 2 while blocked
+.venv-win\Scripts\python -m pytest tests -q
+```
+
+Tests: **487 passed, 0 skipped** (was 204; +283).
+Detail in `AUDIT_REPORT.md` (eighth pass) and `DATA_VERIFICATION_REPORT.md`.

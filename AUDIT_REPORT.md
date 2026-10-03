@@ -791,3 +791,849 @@ end to end on ports 8123-8127 for both policies and both modes; stderr clean.
 
 Circularity and leakage status unchanged. Polish remains sealed. **V-6 remains
 open with no threshold selected.**
+
+---
+
+## 2026-10-01 (eighth pass) — V-4 / V-7 external-validation phase opened, and blocked correctly
+
+This pass built the V-4 / V-7 validation phase. It did **not** unseal the Polish
+cohort, did not train on it, and did not remove a gate.
+
+### What was added
+
+| Path | Purpose |
+|---|---|
+| `src/data/provenance.py` | Record-level cohort-identity verification (schema, participant keys, value-label-decoded categoricals, per-participant numerics). Metadata-only output, with a payload guard that rejects participant-shaped fields. |
+| `src/eval/gates.py` | V-4 MDE + Holm-Bonferroni confirmatory family; V-7 denominator reconciliation; frozen-vs-cohort feature compatibility. |
+| `src/eval/external_validation.py` | `FrozenPredictor` (prediction-only, immutable), `assert_no_fitting`, `preflight`, `group_to_label`, external metrics, bootstrap CIs. |
+| `scripts/step9_v4_v7_gates.py` | Writes `results/polish_provenance_verification.json` and `results/v4_v7_validation_status.json`. |
+| `scripts/step10_external_validation.py` | Runs the real circularity + leakage audits, then external validation — currently stops with exit code 2. |
+| `tests/test_v4_v7_validation.py` | 36 regression tests. |
+| `.gitignore` | `data/*.sav` added, so the SPSS export can never be committed. |
+
+### Gate states — all honest
+
+| Gate | Automated evidence | Human sign-off | Overall |
+|---|---|---|---|
+| **V-4** MDE + family freeze | **PASS** | **OPEN** | **OPEN** |
+| **V-7** Polish denominator | **PASS** | **OPEN** | **OPEN** |
+| **V-7** Baseline 10 recomputation | **OPEN** | **OPEN** | **OPEN** |
+| **External validation** | — | — | **BLOCKED** |
+
+V-4's automated evidence passes: the minimum detectable effect is computed for all
+five pre-declared confirmatory comparisons at n = 252, with Holm-Bonferroni
+adjustment, across a sensitivity grid of assumed paired-difference SDs
+(0.50 / 1.00 / 2.00). Every MDE figure is explicitly labelled assumption-dependent —
+the SD is not measurable before the cohort is opened, so a **sensitivity grid**
+rather than a single number is the honest output. The gate stays OPEN because only
+a supervisor can ratify the assumed effect size.
+
+V-7's denominator discrepancy is resolved from the data: the cohort holds
+**135 ASD + 117 control = 252**, matching the published total and the published ASD
+count, while the publication's own text states 135 + 118 = 253. The discrepancy is
+in the publication's arithmetic, and the project denominator is 252. Baseline 10
+remains **OPEN** because faithfully reimplementing Sollis et al. requires that
+publication's model specification, which this repository does not contain;
+implementing it from a paraphrase would fabricate a comparator.
+
+### Why external validation is BLOCKED (two independent reasons)
+
+1. **V-4/V-7 human sign-off is OPEN.** The sealed cohort may not be opened.
+2. **The frozen predictor cannot consume this cohort.** Measured, not asserted:
+
+   | | frozen (Saudi) | sealed (Polish) |
+   |---|---|---|
+   | items | 10 | 25 |
+   | response scale | binary | ordinal, 4–6 levels |
+   | encoder width | 41 (`4n+1`) | 199 (`3n + Σm + 1`) |
+
+   `encode_state` already supports `m_list`, and `MaskedPredictor`/`DQNPolicy`/
+   `PPOPolicy` already accept it — the plumbing exists but `load_polish` never
+   populates it. **No coercion is offered.** Squeezing a 4–6 level ordinal response
+   into a binary slot would silently destroy information, so `preflight` raises
+   instead. A compatible predictor must be trained under an explicit, reviewed
+   decision before this phase can proceed; that decision has not been taken.
+
+### Circularity / leakage — measured with the project's own audits
+
+| Cohort | best threshold | exact match | classification |
+|---|---|---|---|
+| Polish (`GROUP`, clinical) | — | **0.5437** | **Not circular** |
+| Saudi (`Class`, questionnaire) | 4 | **1.0000** | Deterministic |
+
+That contrast is precisely why the sealed cohort is informative, and why it must
+never be used to tune anything. Leakage status **PASS**: the development cohort
+carries `label_source = questionnaire`, the external cohort `label_source = clinical`,
+the instruments are disjoint (10 binary items vs 25 ordinal), and the development
+records expose no participant key column at all.
+
+Also recorded: the Step 2/3 research metrics were produced with `isotonic`
+calibration, but the only frozen artefact persisted on disk uses `platt` — the
+isotonic artefact was never saved. Recorded rather than papered over; it means the
+research configuration cannot be reproduced exactly from disk.
+
+### Scope respected
+
+No change to the RL environment. No change to `GreedyIGPolicy`. No Saudi
+retraining. No cohort merge. No threshold invented. No gate removed. No sign-off
+fabricated. No new dataset created from the `.sav`. **V-6 untouched.**
+
+Tests: **240 passed, 0 skipped** (was 204; +36 new).
+
+---
+
+## 2026-10-01 (ninth pass) — calibration reproducibility closed; Polish compatibility answered OPEN
+
+### 1. Calibration root cause
+
+`results/predictor_saudi_metrics.json` recorded `calibration: isotonic`, while the
+only persisted predictor on disk used Platt. The cause was **not** a wrong
+calibration choice. It was that **`scripts/step2_train_and_sweep.py` never saved
+the model it trained.**
+
+* `_train_one` built a `MaskedPredictor(calibration="isotonic")`, fitted it, fitted
+  the isotonic calibrator on the validation split, computed test metrics, and
+  returned a metrics dict. The trained object went out of scope and was discarded.
+* Its own docstring claimed it returned a *"serializable model"* — it did not.
+* No `torch.save` existed anywhere in step2. The only persisted predictor was the
+  browser demo's Platt cache (`demo_app.py`), which is a **different artefact with a
+  different calibration** and a documented reason (isotonic collapses to 3
+  breakpoints on 95 validation records, unusable for a live counter).
+
+So the research metrics described a model that could not be reloaded, re-hashed, or
+verified from anywhere in the repository. The metrics were never *wrong* — they were
+**unreproducible**.
+
+Spec §12 permits either method (*"isotonic or Platt calibration fitted only on
+training/validation data"*) and the config offered both, so neither was uniquely
+authoritative. The defect was the missing artefact, not the choice.
+
+### 2. Calibration method selected
+
+**isotonic remains authoritative for research metrics** — it is what produced every
+research number in the repository (Steps 2–8). The Platt cache stays **demo-only**
+and is now recorded as such in the gate artifact.
+
+### 3. Fix and verification
+
+Step 2 now persists the fitted predictor before returning metrics:
+
+* `results/predictor_saudi_v2_isotonic.pt` — weights
+* `results/predictor_saudi_v2_isotonic.pkl` — calibrator
+* `results/predictor_uci_child_v2_isotonic.{pt,pkl}` — same for the second cohort
+
+The filename carries `MaskedPredictor.VERSION` so a semantics change cannot reuse
+stale weights, and the metrics artifact records both SHA-256 digests.
+
+**The decisive check — are the old metrics reproducible?** Re-running step 2 after
+the fix regenerated every metric **bit-identically**:
+
+| field | before | after | match |
+|---|---|---|---|
+| `test_brier` | 0.009122572011964558 | 0.009122572011964558 | yes |
+| `test_ece` | 0.021937832758047126 | 0.021937832758047126 | yes |
+| `test_auroc` | 1.0 | 1.0 | yes |
+| `test_logloss` | 0.030677343667907076 | 0.030677343667907076 | yes |
+| `val_brier` | 0.015866726086649366 | 0.015866726086649366 | yes |
+
+| | |
+|---|---|
+| weights sha256 | `2366a28353f77b19b628073b9f97393e3218a80e9643b93dd4456e58f02cf1d4` |
+| calibrator sha256 | `a1978f274797b463c44b7c7a1b9b93a007b813f5e019a6534855865664583863` |
+| artifact version | 2 |
+
+No stale artefact was deleted and no recorded value was edited to make it agree —
+the metrics were *regenerated* and matched on their own.
+
+### 4. Polish feature compatibility — answered OPEN, not guessed
+
+`src/eval/qchat10_subset.py` asks whether a defensible Q-CHAT-10 subset can be
+extracted so the frozen model runs unmodified. Three requirements, all unmet:
+
+| requirement | state | why |
+|---|---|---|
+| scale compatibility | **OPEN** | 25 of 25 items ordinal, **0 natively binary**; no stated ordinal → binary rule |
+| item identity | **OPEN** | cohort carries **no question wording** — only codes and SPSS value labels |
+| provenance | **OPEN** | no canonical Q-CHAT-10 / Q-CHAT-25 item definition in this repository |
+
+A partial mapping is refused, not accepted: the analysis requires exactly 10
+identified items before it will call a subset defensible. Nothing is truncated,
+thresholded, or coerced.
+
+### 5. Governance — all human items remain OPEN
+
+| Gate / item | Automated | Human |
+|---|---|---|
+| V-4 MDE + family freeze | PASS | **OPEN** |
+| V-7 denominator (252) | PASS | **OPEN** |
+| V-7 Baseline 10 | **OPEN** | **OPEN** |
+| Q-CHAT-10 subset feasibility | **OPEN** | **OPEN** |
+| External validation | **BLOCKED** | — |
+
+`EVIDENCE_REQUESTS.md` states exactly what a supervisor must supply for each.
+`POLISH_VALIDATION_DECISION.md` compares the three options and recommends
+**Option A** — verified 10-item subset — on the grounds that it is the only option
+that answers the question the gates were raised to ask and the only one that
+validates the system actually built, while explicitly recording that the choice is
+a research-priority judgement, not an engineering one, and belongs to the
+supervisor.
+
+### 6. Scope respected
+
+No change to Saudi RL training, reward, state representation, policies, benchmark
+artifacts, or V-6. The Polish cohort remains sealed. No gate removed, no sign-off
+fabricated, no metric invented.
+
+Tests: **258 passed, 0 skipped** (was 240; +18).
+
+---
+
+## 2026-10-01 (tenth pass) — Q-CHAT-10 feature contract: 9 of 10 verified, Q10 OPEN
+
+The external-source mapping was supplied for Q1–Q9. The contract was then derived
+from **primary sources already in the repository**, not from a secondary summary.
+
+### Sources used
+
+| source | what it establishes |
+|---|---|
+| `data/raw/Q-CHAT Saudi Arabia/ASD Screening Data for Toddlers in Saudi Arabia Data Set Description.pdf` | the instrument is *"an Arabic translation of Q-CHAT-10"*; `A1`…`A10` are **natively Binary (0,1)**, with `A{i}` = Q-CHAT-10 item {i}; scoring is *C/D/E → 1* for items 1–9 and *A/B/C → 1* for item 10 |
+| `data/raw/Q-CHAT Polish/QCHAT.pdf` | full Q-CHAT-25 wording and printed option order for all 25 items |
+| SPSS value labels of `QCHAT_dataset2_mendeley.sav` | each Polish response **code** → its label, and therefore the code ordering |
+
+### The frozen model's feature contract
+
+`src/data/ingest.py` builds the ten features as
+
+```python
+vals = np.array([float(row[f"A{j}"]) for j in range(1, 11)])
+```
+
+— read directly, with **no thresholding, no collapsing, no inversion, no
+reordering**. Model feature *i* is column `A{i}` verbatim. Per the Saudi
+description those columns already *are* the instrument's 0/1 recoding.
+
+### Verified mapping (9 of 10)
+
+| model feature | Saudi column | Q-CHAT-10 item | Q-CHAT-25 item | Polish variable |
+|---|---|---|---|---|
+| feature_1 | A1 | Q1 | Q1 | `qchat1recode` |
+| feature_2 | A2 | Q2 | Q2 | `qchat2recode` |
+| feature_3 | A3 | Q3 | Q6 | `qchat6recode` |
+| feature_4 | A4 | Q4 | Q9 | `qchat9recode` |
+| feature_5 | A5 | Q5 | Q10 | `qchat10recode` |
+| feature_6 | A6 | Q6 | Q15 | `qchat15recode` |
+| feature_7 | A7 | Q7 | Q17 | `qchat17recode` |
+| feature_8 | A8 | Q8 | Q19 | `qchat19recode` |
+| feature_9 | A9 | Q9 | Q25 | `qchat25recode` |
+| **feature_10** | A10 | Q10 | **OPEN** | **OPEN** |
+
+### Q10_MAPPING = OPEN
+
+No verified Q-CHAT-25 variable corresponds to Q-CHAT-10 item 10. The remaining
+unused Polish items were examined (Q3, Q4, Q5, Q7, Q8, Q11, Q12, Q13, Q14, Q16,
+Q18, Q20, Q21, Q22, Q23, Q24) and none is *established* as item 10 — and item 10
+has the opposite scoring direction (A/B/C → 1), so it cannot inherit the rule
+used for items 1–9. Nothing was substituted.
+
+`build_feature_matrix()` raises rather than returning a 9-vector, and
+`external_validation.build_qchat10_features()` converts that into a precise
+`ExternalValidationBlocked`. Step 10 therefore still exits **2** with
+`metrics: null`.
+
+### Ordinal → binary, and why it is a collapse not a cast
+
+Every mapped item's SPSS codes run **typical → atypical** (verified against the
+construct wording item by item), so the instrument's "C/D/E scores 1" reduces to
+`code >= 2`:
+
+```
+feature_i = 1 if polish_code >= 2 else 0
+```
+
+Two details the tests now pin:
+
+* **`qchat2recode` is not contiguously coded** — it is `0,1,2,3,**5**`, with code 4
+  never observed. The split is applied to the code *value*, and an unobserved code
+  raises rather than being scored. (An earlier version of the contract indexed
+  labels positionally and would have accepted a code 4 that does not exist.)
+* **`qchat25recode` is reverse-coded** — code 0 is `nigdy` (never) and code 4 is
+  `wiele razy/dzień` (many times a day), i.e. the opposite of the printed option
+  order. Applying the *printed* C/D/E letters would mark "never stares" as
+  atypical, which contradicts the construct; the code-wise rule is the coherent
+  reading and the reasoning is recorded in the contract for review.
+
+Information loss is inherent and stated: 5 categories collapse to 2. The
+documented invalid sentinel `11.0` is never scored, out-of-vocabulary codes raise,
+and missing values return `NaN` rather than being imputed as 0.
+
+### The published cut-off was not used
+
+The instrument's *"more than 3 points → potential ASD traits"* is a rule for the
+raw questionnaire. It is **not** the model's decision threshold; that stays the
+frozen τ = 0.5 on a calibrated probability, asserted by test.
+
+### Where 199 comes from
+
+Measured, not assumed: `encode_state` returns **199** for the Polish cohort, and
+`3n + Σm_list + 1 = 3·25 + 123 + 1 = 199`. The layout is
+`[3n = 75 mask one-hot] [Σm = 123 response one-hot] [1 normalised budget]`. The
+response block is concatenated **per item with that item's own cardinality**, so it
+is 123 rather than 25×5 = 125 — two items have 4 levels, not 5. It is not a
+one-hot over the full grid, and not an ordinal expansion.
+
+### Frozen model untouched
+
+`predictor_saudi_v2_isotonic.pt` sha256 `2366a283…` and `.pkl` sha256 `a1978f27…`
+both verified **unchanged** after this pass. No retraining. No change to the RL
+environment, reward, policies, benchmark artefacts, or V-6.
+
+Tests: **309 passed, 0 skipped** (was 258; +51).
+
+---
+
+## 2026-10-02 (eleventh pass) — CORRECTED Q-CHAT-10 contract: mapping fixed, all 10 verified
+
+The previously recorded Q1–Q9 mapping was **wrong** from Q3 onward. The corrected,
+authoritative mapping (verified against the Autism Research Centre Q-CHAT-10
+instrument and the original 25-item Q-CHAT source) is now the single canonical
+definition in `src/data/qchat10_contract.py`.
+
+| model feature | Saudi col | Q-CHAT-10 | Q-CHAT-25 | Polish variable |
+|---|---|---|---|---|
+| feature_1 | A1 | Q1 | Q1 | `qchat1recode` |
+| feature_2 | A2 | Q2 | Q2 | `qchat2recode` |
+| feature_3 | A3 | Q3 | **Q5** | `qchat5recode` |
+| feature_4 | A4 | Q4 | **Q6** | `qchat6recode` |
+| feature_5 | A5 | Q5 | **Q9** | `qchat9recode` |
+| feature_6 | A6 | Q6 | **Q10** | `qchat10recode` |
+| feature_7 | A7 | Q7 | **Q15** | `qchat15recode` |
+| feature_8 | A8 | Q8 | **Q17** | `qchat17recode` |
+| feature_9 | A9 | Q9 | **Q19** | `qchat19recode` |
+| feature_10 | A10 | **Q10** | **Q25** | `qchat25recode` |
+
+Q1 and Q2 were already correct; everything after Q2 was shifted. The Polish variable
+set changed by exactly one addition: `qchat5recode`. Fifteen Q-CHAT-25 items remain
+unused.
+
+### Scoring is derived from the value labels, not from code magnitude
+
+For every code the contract resolves SPSS code → Polish label → the English wording
+printed in the Q-CHAT-25 instrument → the printed letter A–E, then applies the
+official Q-CHAT-10 rule for that item (C/D/E = 1 for items 1–9; A/B/C = 1 for item
+10). That derivation is the answer.
+
+The simpler `code >= 2` happens to agree for all ten items, but it is a *consequence*,
+not the premise. `verify_split_rule()` proves the two agree and raises on any
+disagreement, so the shortcut can never silently diverge.
+
+This matters concretely for **Q10 → Q25**, the only reverse-coded item:
+
+```
+qchat25recode:  0 = nigdy (never)   -> letter E -> 0
+                1 = mniej niż raz/tydzień -> letter D -> 0
+                2 = kilka razy/tydzień    -> letter C -> 1
+                3 = kilka razy/dzień       -> letter B -> 1
+                4 = wiele razy/dzień       -> letter A -> 1
+```
+
+More frequent staring carries a **higher** code and scores **1**. The printed order
+(A = many times a day) runs opposite to the SPSS codes, so a magnitude assumption
+would have inverted `feature_10`.
+
+### Two latent defects found and fixed
+
+1. **A duplicate scoring rule lived in `src/data/ingest.py`.** The dead function
+   `qchat10_binary_map` encoded item 10 as `1 if v <= 2 else 0`, which assumes the
+   10th item's codes run in *printed* order. Applied to reverse-coded
+   `qchat25recode` that rule inverts the feature. It had no callers, so nothing was
+   affected, but it was a live hazard and a second hard-coded mapping. Removed; the
+   contract module is now the only definition, and a test enforces that.
+
+2. **`_VALID_QCHAT_VALUES["qchat2recode"]` omitted `niemożliwe`.** That label is the
+   valid code-5 response. The constant is unreferenced (dead), so no data was
+   affected, but it was factually wrong and would have rejected valid responses if
+   ever wired up. Corrected, and a test now cross-checks it against the contract.
+
+### Polish label strings are accepted natively
+
+The integrated Polish CSV stores the **label text**, not numeric codes. The contract
+resolves either representation, so no lossy pre-conversion is needed.
+
+### Shape and interface verified
+
+* `build_feature_matrix` returns `(252, 10)` for the real cohort — exactly 10 binary
+  positions, zero NaN, all columns non-degenerate (atypical rates 0.27–0.65).
+* No padding, no missing position, no unrelated item; a short or long vector raises.
+* The 10 binary features encode to the frozen **41-dimensional** input via the
+  project's own `init_state`/`update_state` convention (`4n + 1`, `m_list=None`),
+  and both frozen artefacts accept it in a forward pass. **No metric computed.**
+* `predictor_saudi_v2_isotonic.{pt,pkl}` and `demo_model_saudi_seed0_platt_v2.{pt,pkl}`
+  sha256 all **unchanged**. No retraining. RL environment, reward, policies,
+  benchmark artefacts and V-6 untouched.
+
+### External validation remains BLOCKED
+
+`Q10_MAPPING` is no longer OPEN, but that is **not** a validation pass. Step 10 exits
+**2** with `metrics: null`. Two blockers stand:
+
+1. **V-4 and V-7 human sign-off are OPEN** — the sealed cohort may not be opened.
+2. **The 25-item raw representation still does not feed the 41-dimensional frozen
+   encoder directly.** The verified projection is a legitimate route, but it is
+   authorised separately and deliberately not performed here.
+
+The instrument's published ">3 points" rule was **not** used as the model threshold;
+τ remains the frozen calibrated 0.5.
+
+Tests: **345 passed, 0 skipped** (was 309; +36).
+
+---
+
+## 2026-10-02 (twelfth pass) — V-4 / V-7 / projection sign-off package prepared
+
+Three supervisor decision packages produced. **No gate was closed. No approval was
+fabricated or inferred.**
+
+### New files
+
+| file | purpose |
+|---|---|
+| `docs/V4_SIGNOFF_PACKAGE.md` | confirmatory family, n, MDE grid, assumed SD, Holm family, decision block |
+| `docs/V7_SIGNOFF_PACKAGE.md` | denominator evidence vs published inconsistency, Baseline 10 specification request |
+| `docs/QCHAT10_PROJECTION_APPROVAL.md` | per-item code/label/letter/binary evidence, information-loss statement, decision block |
+| `docs/POLISH_EXTERNAL_VALIDATION_SIGNOFF.md` | mentor-facing summary of all eleven required points |
+| `results/pre_validation_reproducibility.json` | machine-readable reproducibility record |
+
+### Third gate condition added
+
+The Q-CHAT-10 projection is now a **named, machine-readable gate**
+(`Q-CHAT-10-PROJECTION`) rather than a note inside another gate. Step 10 requires
+**all three** conditions and names each unmet one separately:
+
+```json
+"required_conditions": {
+  "v4_human_sign_off": "OPEN", "v7_human_sign_off": "OPEN",
+  "qchat10_projection_approval": "OPEN" }, "all_conditions_closed": false
+```
+
+### Evidence vs approval kept separate
+
+`analyse_subset_feasibility` previously hard-coded `provenance` as unsatisfiable. Now
+the three **evidence** requirements (`scale_compatibility`, `item_identity`,
+`provenance`) can reach PASS from facts, while a **fourth** requirement,
+`supervisor_approval`, is always OPEN and can never be closed by code. A new test
+pins exactly this: with complete verified evidence the report reads
+`automated_evidence = PASS`, `supervisor_approval = OPEN`,
+`approved_as_external_representation = False`, `state = OPEN`.
+
+### Reproducibility record
+
+`results/pre_validation_reproducibility.json` pins predictor weights and calibrator
+SHA256, calibration method (`isotonic`), git SHA, integrated CSV and SPSS source
+SHA256, split fingerprint, feature-contract version `qchat10-contract/2.0.0` and
+mapping version `qchat10-mapping/2.0.0`. It re-hashes the artefacts at write time and
+records `modified_since_training: false` and `hashes_unchanged: true`.
+
+### State after this pass
+
+* Step 9 exit 0. Step 10 **exit 2**, `metrics: null`, three gate blockers plus the
+  representation note.
+* Tests **349 passed, 0 skipped** (was 345; +4).
+* All four frozen/data SHA256s unchanged. No retraining. RL environment, reward,
+  solvers, models, configs and V-6 untouched. No commit, no push.
+
+Two of my own tests failed on the first run because they asserted the previous
+blocker wording and the previous subset blocking set; both were updated to assert the
+new, stricter behaviour rather than relaxed.
+
+---
+
+## 2026-10-02 (thirteenth pass) — supervisor decisions applied; PRIMARY external validation executed
+
+Supervisor research decisions of 2026-10-02 (DECISIONS 1-9) implemented exactly. No
+approval was inferred by any automated process; each is recorded with its reference.
+
+### Result — reported as measured
+
+Discrimination transfers: **AUROC 0.8959 (95% CI 0.8560-0.9314)** against
+clinician-established Polish labels, Brier 0.1398, at the frozen tau = 0.5
+(sensitivity 0.800, specificity 0.880, PPV 0.885, NPV 0.792).
+
+**Two findings that materially qualify that result:**
+
+1. **The model does not beat a trivial baseline.** Counting atypical answers gives
+   AUROC **0.9369**; the frozen model gives 0.8959. The network is **0.041 worse**
+   than simply summing the instrument. The instrument carries the signal, not the
+   model.
+2. **Calibration is poor.** Calibration slope **0.167** against an ideal 1.0,
+   calibration-in-the-large 0.501, ECE 0.137. The isotonic calibrator has collapsed
+   to a near-bimodal output (120 predictions ~0, 107 ~1). The ranking transfers; the
+   probabilities do not and must not be read as calibrated risks.
+
+Both are recorded in `results/polish_external_validation.json` under
+`headline_finding`, `internal_item_count_reference` and `limitations` rather than
+smoothed over.
+
+### Gate logic
+
+Seven conditions now gate the primary run, all required:
+projection evidence, provenance, leakage, circularity, frozen artefact, calibration
+reproducibility, denominator. `primary_gate_open()` fails if any one fails or is
+unevaluated; a test drives all eight single-failure cases and the missing case.
+
+Removed from the gate, per decision: V-4 SD ratification, Baseline-10
+specification. Both are recorded in `NON_BLOCKING_FOR_PRIMARY` with reasons.
+
+The MDE grid is **retained, not deleted**, and relabelled
+`SENSITIVITY_ANALYSIS_REPORTED`.
+
+### Honesty corrections made along the way
+
+* Step 9's artifact tag claimed "NO human sign-off has been given; this artifact does
+  NOT open the Polish cohort". That became false once decisions were recorded, so the
+  tag was rewritten to state what is actually approved and that Step 10 alone opens
+  the cohort after all seven conditions pass.
+* `encode_qchat10_features` had been setting `budget = 0` while the Saudi metrics were
+  computed with `budget = n`. Both yield 0.0 because `questions_remaining = 0`, so no
+  result changed, but the convention now matches and a test asserts byte-equality
+  against the exact Saudi terminal scoring path.
+
+### Unchanged
+
+All four frozen/data SHA256s verified unchanged. No retraining. RL environment,
+reward, solvers, policies, configs and V-6 untouched (`git diff --stat` empty over
+those paths). No commit, no push.
+
+Tests: **368 passed, 0 skipped** (was 349; +19).
+
+Full write-up: `docs/PRIMARY_EXTERNAL_VALIDATION_RESULTS.md`.
+
+---
+
+## 2026-10-02 (fourteenth pass) — diagnosis: WHY the frozen predictor loses to item count
+
+Diagnostic pass. No retraining, no frozen artefact modified, no model selected on
+Polish, and the Step 10 primary result left exactly as recorded.
+
+### The gap is statistically resolved
+
+Paired percentile bootstrap, identical resamples, 5000 resamples:
+
+```
+AUROC(frozen) - AUROC(item_count) = -0.0410
+95% CI                            = [-0.0636, -0.0186]   entirely below zero
+P(model better) = 0.0000    P(model worse) = 1.0000
+```
+
+The model is **significantly worse**, not indeterminate. Brier, by contrast, is
+indeterminate: -0.0052, CI [-0.0319, +0.0224].
+
+### Two separable causes, both identified
+
+1. **Network saturation.** ~41% of Saudi terminal states score exactly 1.0
+   pre-sigmoid versus ~21% on Polish. The Saudi target is a deterministic
+   sum-threshold, so the loss is minimised by an overconfident mapping. Raw output
+   sd is 0.476 — already near-bimodal before calibration.
+2. **The isotonic calibrator destroys ranking.** It maps 103 distinct raw scores
+   onto 16 levels, creating ties. Raw AUROC 0.9292 -> isotonic 0.8959. Isotonic
+   alone costs **0.033 AUROC**.
+
+The ranking was largely intact before calibration. The authoritative calibrator is
+what broke it.
+
+### Ablations (all Saudi-only, nothing fitted on Polish)
+
+| predictor | Brier | AUROC | ECE | slope |
+|---|---:|---:|---:|---:|
+| raw uncalibrated | 0.1421 | 0.9292 | 0.1365 | 0.271 |
+| Platt (existing Saudi artefact) | 0.1384 | 0.9296 | 0.1367 | 0.310 |
+| isotonic (PRIMARY) | 0.1398 | 0.8959 | 0.1370 | 0.167 |
+| item count | 0.1450 | 0.9369 | 0.1690 | 1.246 |
+| **logistic L2 C=0.1 (Saudi train)** | **0.1097** | 0.9349 | **0.0775** | 1.370 |
+
+Isotonic is the worst calibrator of the three on BOTH Brier and AUROC. A plain
+logistic regression trained on 284 Saudi records beats the frozen network on every
+metric.
+
+### Incremental information
+
+Best Saudi logistic minus item count = **-0.0021**. Logistic can use *which* items
+are atypical, so it is the fair test of incremental information; it also fails to
+beat the count. The item count captures essentially all available discrimination
+signal at n = 252.
+
+Precise wording adopted: "The current frozen predictor did not demonstrate
+incremental discrimination over the item-count reference on this external cohort."
+
+### Classification: C (confirmed)
+
+### RL component kept separate
+
+The predictor result does not invalidate adaptive question selection, but it bounds
+it: every policy reward is scored through this predictor, so a rank-degraded,
+miscalibrated scorer distorts the reward. Existing Saudi benchmark retained with an
+explicit warning that those labels are circular and flatter every policy. Two defects
+flagged, not hidden: beta_greedy is numerically identical to greedy (the known H1
+saturation), and ppo asks only 1.43 items and matches nothing (looks like premature
+stopping, not efficiency). No trained RL policy artefact exists on disk, so a fresh
+external RL evaluation was deliberately not run.
+
+### New permanent baselines
+
+`src/eval/baselines.py` makes `item_count`, `random_questioning` and
+`greedy_information_gain` mandatory references for any future improvement claim, with
+`missing_baselines()` reporting omissions. Documented motivation: the 0.041 deficit.
+
+### Unchanged
+
+Primary result frozen: tau 0.5, AUROC 0.8959, Brier 0.1398, ECE 0.1370, item-count
+reference 0.9369. All six artefact/data SHA256s verified unchanged. RL environment,
+reward, policies, configs and V-6 untouched. No commit, no push.
+
+Tests: **389 passed, 0 skipped** (was 368; +21).
+
+Write-up: `docs/PREDICTOR_DIAGNOSIS.md`.
+
+---
+
+## 2026-10-02 (fifteenth pass) — predictor v3, frozen RL protocol, adaptive-selection external evaluation
+
+Supervisor decisions implemented. Predictor v2 retained unmodified as a frozen legacy
+artifact; it is NOT deleted.
+
+### Predictor v3 (`logistic-saudi-v3`)
+
+L2 logistic C=0.1 on the Saudi train split, Platt calibration on the Saudi validation
+split. Artifact `results/predictor_logistic_saudi_v3.pkl`
+sha256 `a6f28b85f2932151b745696f0bb24943024c31ac23be41fae91c4f6c483643a2`.
+Saudi held-out test: Brier 0.0458, AUROC 1.0000 (circular labels), ECE 0.1777.
+
+Partial states are scored by exact Bayesian marginalisation over all 2^10
+configurations with Saudi-training priors, rather than imputing unobserved items.
+
+**Two real bugs found and fixed during construction** (both documented):
+1. Platt fitted on the *logit* diverged — the near-separable Saudi target saturates
+   raw probabilities, logits reach +-40, and the unpenalised fit produced
+   coefficient 60.9, collapsing every prediction to ~0.001. Fixed by regressing on
+   the bounded raw probability (standard Platt form, monotone).
+2. The 2^10 lookup table used a reversed bit convention relative to
+   `itertools.product`, and normalised by the prior mass of ALL configurations
+   instead of the CONSISTENT subset. Together these returned ~0.001 everywhere.
+   Both fixed; `test_full_vector_and_state_scoring_agree_exactly` locks it.
+
+### Protocol frozen before Polish
+
+`results/polish_rl_external_protocol.json`. Budgets {2,3,4,5,10}, seed 0,
+paired percentile bootstrap 5000 resamples, primary tau 0.5 (never tuned on
+Polish), 0.3 recorded as secondary sensitivity only. Reward structure unchanged.
+
+**`acceptable_AUROC_margin = "OPEN"`.** No margin was chosen and none invented; no
+equivalence or non-inferiority claim is made in either direction.
+
+DQN policies were **trained and persisted** per budget (`results/policies_v3/`),
+which they previously were not. All five sha256-verified.
+
+### Mandatory baselines
+
+`REQUIRED_BASELINES` now includes `beta_greedy_evoi`. `assert_all_baselines()` fires
+`MissingBaselineError` — it genuinely blocked the run during development until
+`item_count` was recorded as a first-class arm.
+
+### Polish results (once, after the freeze)
+
+Full-question reference: v3 predictor AUROC 0.9349, raw item count 0.9369.
+
+| B | greedy IG | beta-greedy | DQN | random |
+|---|---|---|---|---|
+| 2 | 0.7879 | 0.7879 | 0.7964 | 0.7877 |
+| 3 | 0.8495 | 0.8483 | 0.8679 | 0.8233 |
+| 4 | 0.8904 | 0.8915 | 0.8676 | 0.8247 |
+| 5 | 0.9047 | 0.9081 | 0.8760 | 0.7821 |
+| 10 | 0.9349 | 0.9349 | 0.9328 | 0.8070 |
+
+### Conclusion: negative, reported as measured
+
+**Adaptive questioning did NOT reduce questions while retaining acceptable
+performance.** Every arm at every budget below 10 has a paired AUROC difference
+whose 95% interval lies entirely below zero. Best sub-full result, beta-greedy at
+B=5: -0.0288 [-0.0507, -0.0091].
+
+Three further findings reported rather than smoothed over:
+- **RL did not beat the heuristics.** DQN won at B=3 but lost at B=4 and B=5.
+- **Beta-greedy equals greedy** to within 0.002 everywhere.
+- Performance tracks questions asked almost as if selection barely mattered.
+
+### Unchanged
+
+v2 artifacts sha256-verified unchanged. RL environment, reward structure, existing
+policy implementations, configs and V-6 untouched (`git status` clean over those
+paths). Primary Step 10 result untouched. No commit, no push.
+
+Tests: **414 passed, 0 skipped** (was 389; +25).
+
+Write-up: `docs/PREDICTOR_V3_AND_RL_RESULTS.md`.
+
+---
+
+## 2026-10-02 (sixteenth pass) — corrected experimental design; confirmatory result is NULL
+
+All approved decisions implemented. Existing results retained, not deleted. No frozen
+material overwritten. Polish never used to tune.
+
+### Design corrections
+
+1. **Random baseline**: new `RandomFixedLengthPolicy` (STOP never legal).
+   `b_min = B` for every arm, so every episode asks exactly B unique questions.
+   Verified `min == max == B` for all arms and budgets. The old `RandomPolicy` asked
+   only 1.73/2, 2.60/3, 3.12/4, 3.52/5, 4.96/10 — the defect that invalidated the
+   first "adaptive beats random" comparison. `RandomPolicy` is untouched and
+   reserved for a future stopping experiment.
+2. **Two references**, reported separately: A v3 full-information 0.9349, B item
+   count 0.9369. `delta_vs_v3_full` and `delta_vs_item_count` for every row. Neither
+   called a sole ceiling.
+3. **B=10 wording corrected.** All four arms return exactly 0.9349 because the
+   fixed-budget semantics force all ten items; B=10 is a reference, not a comparison.
+
+### Confirmatory family F1 — NULL
+
+8 comparisons, Holm-Bonferroni alpha 0.05, 5000 paired bootstrap resamples with
+identical resamples within each comparison. **All 8 intervals include zero; all
+Holm-adjusted p = 1.0.**
+
+Adaptive selection did NOT demonstrate superiority over budget-matched random at any
+reduced budget. This **contradicts** the reframing proposed before execution, exactly
+as the instruction to let the corrected experiment decide anticipated. The earlier
+apparent adaptive advantage was an artefact of the random arm being under-asked.
+
+Exploratory, uncorrected: random-fixed is AHEAD at B=4 (0.9144 vs greedy 0.8904);
+DQN best at B=2/B=3, worst at B=4; beta-greedy and greedy near-identical.
+
+### ExactDP objective inconsistency found and fixed
+
+`ExactDP` optimised `1-(p_emp-y)^2` using the empirical label mean, NOT the
+environment's `1-(p_hat-y)^2`. An optimality gap between the solver and
+environment-trained policies would have been meaningless. An OPTIONAL `predictor`
+argument was added; default `None` preserves prior behaviour bit-for-bit, verified:
+B=2 still returns V*=0.93862870, matching the pre-existing artifact.
+
+Optimality gap at B=5: greedy +0.0727, beta +0.0737, random +0.0964, **DQN +0.1003**
+(worst). Reported as an oracle under the simulator, never as clinically optimal.
+
+### Bayesian marginalisation audit
+
+Saudi joint prior: 155/1024 observed, 869 zero-mass, 121 cells with count 1,
+effective support 35.6. Variant A (empirical joint) FAILS with 35 undefined states —
+exactly the Saudi-val configurations absent from train. Variant C (factorised)
+PRIMARY; variant B add-alpha with **prespecified** alpha=0.5. No variant selected
+using Polish.
+
+### Reward/surrogate audit
+
+`R = 1-(p_hat-y)^2`, lambda=0, unchanged, but the development label is
+questionnaire-derived and the external target is clinician-established, so the
+reward is a SURROGATE. Across 20 cells, reward vs external AUROC gives Pearson 0.845
+/ Spearman 0.836, driven by budget level. **At matched budget the reward does not
+rank-order external AUROC**: at B=4 the lowest-reward arm has the highest AUROC.
+
+### DQN reproducibility
+
+5 seeds per budget, 2000 episodes each, selection by highest mean terminal reward on
+Saudi validation (ties -> lowest seed). Polish not inspected. All five seeds reported
+per budget. Validation AUROC SD 0.013-0.027 at reduced budgets and exactly 0 at B=10
+where all items are forced — an independent sanity check. New artifacts in
+`results/policies_v3_multiseed/`; original single-seed files retained.
+
+### Deferred / future work
+
+NZ cross-dataset **DEFERRED**: the primary 1054-row file is absent, the pooled
+6075-row file was NOT used as a substitute, and the NZ loader was NOT modified.
+Ordinal Q-CHAT-10 predictor documented as `DOCUMENTED_NOT_IMPLEMENTED`; binary
+contract unchanged. Equivalence margin remains OPEN; no equivalence,
+non-inferiority or "statistically indistinguishable" claim anywhere.
+
+### Unchanged
+
+v2 and v3 predictors, all calibration artifacts, Step 10 primary result (tau 0.5,
+AUROC 0.8959, Brier 0.1398), Saudi and Polish source data, RL environment contract,
+reward definition, V-6 decision — all byte-identical. First evaluation retained.
+No commit, no push.
+
+Tests: **453 passed, 0 skipped** (was 414; +39).
+
+Write-up: `docs/CORRECTED_DESIGN_RESULTS.md`.
+Figure: `docs/figures/polish_fixed_budget_auroc_vs_questions.png`.
+
+---
+
+## 2026-10-02 (seventeenth pass) — frontend / demo redesign (presentation only)
+
+Scope was strictly the demo front end. No research logic was touched.
+
+### The one functional defect fixed
+
+`scripts/demo_static/index.html` contained a **hard-coded frontend budget
+constant** (`const BUDGET = 6`). The budget, instrument size, decision threshold and
+the selectable policy list are now all read from `/api/meta`, so the UI cannot drift
+from the backend configuration. Progress renders as `Question n of <budget>` computed
+from `meta.budget`, and the policy selector is generated from
+`meta.policies_available`.
+
+A related inaccuracy was corrected rather than carried over. The old UI warned that the
+random baseline "asks fewer questions". Measured behaviour: in **Interactive** mode the
+random arm always asks the full budget (STOP is never offered to the policy), whereas
+in **Auto episode** mode `run_episode` runs with `b_min=0`, so STOP *is* legal and
+random stops early on some records. The disclosure is retained but scoped to the mode
+where it is actually true.
+
+### Design
+
+Dark neon multi-gradient theme replaced with a calm, minimal, light interface: one
+accent colour, neutral background, restrained borders, subtle shadows, generous
+whitespace, no decorative animation. Repositioned as **"Adaptive Autism Screening —
+Research Prototype"** with the required tagline and a subtle non-diagnosis disclaimer.
+Hierarchy: header -> session/policy -> question -> answers -> progress -> explanation
+-> result. Deep technical material moved under collapsible sections. Large gauge
+replaced by a large continuous value plus a small explanatory label and a thin scale
+marker, so no gauge implies clinical certainty.
+
+Explainability is separated into a collapsible "Why this question?" driven entirely by
+backend `selection` fields (`criterion_vacuous`, `ig_spread`, `support_size`,
+`support_is_pure`, `tie_at_max`, `n_legal`, `posterior`, `top_items`). No explanation
+is invented client-side; when `applicable === false` the UI says the policy has no
+scoring criterion rather than fabricating one.
+
+Added: policy details panel, skeleton/loading states ("Selecting next question…",
+"Updating screening estimate…"), double-submit prevention, friendly errors with raw
+backend text behind a "Technical details" disclosure, "Start new screening" reset,
+responsive breakpoints, focus-visible styles, aria-pressed/labelledby/live-region, and
+`prefers-reduced-motion`.
+
+Architecture preserved: one self-contained HTML file, no framework, no CDN, no build
+step.
+
+### Existing honesty guards honoured
+
+Four existing demo-audit tests asserted disclosures the rewrite had dropped; all four
+were restored rather than deleted: the "no reinforcement-learning policy is served"
+notice, the label-pure degeneracy explainer, the random early-stop disclosure (wired to
+the policy toggle), and the V-6-unsigned / H1 "not supported at B" wording.
+
+Two tests asserted the *old* hard-coded-budget pattern that this task was required to
+remove, so they were updated to assert the stronger property instead: no budget
+constant in the front end, budget read from `/api/meta`, and the screening estimate
+rendered continuously with no bucketing or whole-percent rounding.
+
+### Unchanged
+
+`scripts/demo_app.py` and the whole API surface are byte-clean. RL environment, reward,
+predictors, model weights, calibration artifacts, policies, configs, Q-CHAT mapping,
+thresholds, V-4/V-7 validation and the V-6 decision are untouched. All six frozen
+artifact/data SHA256s verified unchanged. No retraining. No commit, no push.
+
+Tests: **487 passed, 0 skipped** (was 453; +34, of which 34 are new frontend guards in
+`tests/test_demo_frontend_redesign.py`).
+
+Live smoke test: both exposed policies (Greedy Information Gain, Random Fixed-Length)
+in both modes — session start, question render, answer submit, next question, no
+repeated items, progress 6/6, selection diagnostics, result render, counterfactual,
+reset. Degenerate label-pure path exercised (support 63, IG spread 0.0, 6 items tied).

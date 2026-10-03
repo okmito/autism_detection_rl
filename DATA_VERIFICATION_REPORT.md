@@ -77,3 +77,70 @@ Full provenance also recorded in `AGENT_PROGRESS.md` §Data provenance.
 
 ## Summary
 Saudi 506, Polish 252 (135/117), UCI Child 292 — all verified YES and finalized in `src/data/ingest.py` with real loaders. NZ 1,054 — source located 2026-09-04 at `kaggle.com/datasets/mamoonamushtaq/toddler-autism-dataset-july-2018-csv`; content validated (1,054 rows, Class Yes/No = 728/326, Qchat-10-Score == sum(A), Age 12-36, circularity Deterministic thr 4); **licence = "Unknown"** is the only remaining V-1 blocker (human action). No raw file modified. No fabrication. **2026-09-30:** the raw CSVs were confirmed present in `data/raw/` and Step 2 (predictor training + DP tractability sweep) and Step 3 (preliminary reports) were re-run against the real data — all artifacts carry `"source": "real"` (NZ remains synthetic-fallback pending V-1 and is never reported).
+
+---
+
+## 2026-10-01 — V-4 / V-7 validation phase: `QCHAT_dataset2 mendeley.sav` resolved
+
+A local SPSS export, `data/QCHAT_dataset2 mendeley.sav`, was submitted as a possible
+new clinical cohort. It was verified before being used for anything, and the result
+is that it is **not** a new cohort.
+
+### Formal verification (record level)
+
+Produced by `scripts/step9_v4_v7_gates.py` via `src/data/provenance.py`, using
+`pyreadstat` for the raw read and the file's own SPSS value labels for decoding.
+Artifact: `results/polish_provenance_verification.json`.
+
+| Check | Result |
+|---|---|
+| rows (SPSS export / integrated CSV) | 252 / 252 |
+| columns | 36 / 36 |
+| schema match (order-sensitive) | yes |
+| participant keys matched | 252 |
+| participant keys mismatched | 0 |
+| duplicate participant keys | 0 |
+| `sex`, `group`, `preterm`, `siblings_yesno`, `mothers_education`, `sibling_withASD` | 252/252 each, after applying SPSS value labels |
+| `age`, `birthweight`, `siblings_number`, `Sum_QCHAT` | 252/252 each, numerically equal |
+| **dataset identity** | **same_cohort** |
+
+### The filename is misleading; the hash settles it
+
+`sha256("QCHAT_dataset2 mendeley.sav")` =
+`7fed516fc4e615f4750d0e44c1eea538bbdcdee989e8c2ff8de719976fa08a41`
+
+This is the hash this report already recorded at the top of the file for Mendeley
+`tmpkt2mfkg` / **`QCHAT_dataset1.sav`** ("sha256 `7fed516f…` verified against
+Mendeley's published hash"). The local file is therefore byte-identical to the
+verified dataset1 export, notwithstanding its `dataset2` filename.
+
+**Disposition:** provenance / source evidence only. It is **not** a second cohort,
+it is not ingested, and it is never merged with anything.
+
+### Two facts recovered from the SPSS metadata that were previously unavailable
+
+* `group` is coded **`1 = ASD`, `7 = control`** — not `1`/`2`. The integrated CSV
+  stores the label strings, so any future direct read of the `.sav` must decode
+  value labels before comparing. `src/eval/external_validation.py::group_to_label`
+  accepts both forms and raises on anything else.
+* `V8_A` (an ambiguous SPSS name) resolves, via the file's embedded SAV-LABEL
+  mapping, to **`siblings_number`**. The full embedded mapping is
+  `CHILD_ID=child_id, AGE=age, SEX=sex, GROUP=group, PRETERM=preterm,
+  BIRTHWEI=birthweight, SIBLINGS=siblings_yesno, V8_A=siblings_number,
+  MOTHERS=mothers_education, SIBLING=sibling_withASD, SUM_QCHA=Sum_QCHAT,
+  QCHAT1RE=qchat1recode … QCHAT25RE=qchat25recode`.
+
+### Privacy
+
+`data/*.sav` is gitignored (`.gitignore`), so the export cannot be committed
+accidentally. Verified with `git check-ignore -v`. `git ls-files data/` returns
+nothing: no dataset is tracked. No verification artifact contains a participant
+row, and this is asserted by test.
+
+### Existing privacy defect fixed
+
+`src/data/ingest.py` interpolated the whole invalid-value log — including each
+affected `child_id` — into a `warnings.warn` line, writing participant identifiers
+to stderr. The log line is now aggregate (`1 invalid value(s) … qchat4recodex1`)
+and withholds identifiers; `get_polish_invalid_log()` is unchanged for a caller
+that genuinely needs the row mapping.

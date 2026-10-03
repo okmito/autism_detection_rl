@@ -22,21 +22,6 @@ NZ_COMBINED_CSV = Path(r"data/raw/Q-CHAT NZ/Autism_Screening_Data_Combined.csv")
 # ---------------------------------------------------------------------------
 # Binary mapping for Q-CHAT-10 primary representation (§15)
 # ---------------------------------------------------------------------------
-def qchat10_binary_map(raw: np.ndarray) -> np.ndarray:
-    out = np.full_like(raw, np.nan, dtype=float)
-    for i in range(raw.shape[0]):
-        for j in range(raw.shape[1]):
-            v = raw[i, j]
-            if np.isnan(v):
-                continue
-            v = int(v)
-            if j < 9:
-                out[i, j] = 1 if v >= 2 else 0
-            else:
-                out[i, j] = 1 if v <= 2 else 0
-    return out
-
-
 def _synthetic_records(n: int, n_items: int, label_source: str = "questionnaire", seed: int = 0) -> List[Dict[str, Any]]:
     rng = np.random.default_rng(seed)
     records = []
@@ -144,7 +129,8 @@ _VALID_QCHAT_VALUES = {
     # Normalised by stripping quotes; raw file values include Polish strings
     # Item 1: 5 levels
     "qchat1recode": {"zawsze", "zazwyczaj", "czasami", "rzadko", "nigdy"},
-    "qchat2recode": {"b. trudno", "dość trudno", "dość łatwo", "b.łatwo"},
+    "qchat2recode": {"b.łatwo", "dość łatwo", "dość trudno", "b. trudno",
+                     "niemożliwe"},
     "qchat3recode": {"zawsze", "zazwyczaj", "czasami", "rzadko", "nigdy"},
     "qchat4recode": {"zawsze", "zazwyczaj", "czasami", "rzadko", "nigdy", "nigdy lub nie mówi"},
     "qchat5recode": {"nigdy", "mniej niż raz/tydzień", "kilka razy/tydzień", "kilka razy/dzień", "wiele razy/dzień"},
@@ -221,7 +207,21 @@ def _load_polish_csv(path: Path) -> List[Dict[str, Any]]:
             "group": group,
         })
     if _POLISH_INVALID_LOG:
-        warnings.warn(f"Polish: {_POLISH_INVALID_LOG} invalid values logged (qchat4 11.0 treated as missing).")
+        # Report the shape of the problem, never the participant. Interpolating
+        # _POLISH_INVALID_LOG directly would write every affected `child_id` to
+        # stderr; `child_id` is a participant identifier and this cohort is
+        # health-related research data. get_polish_invalid_log() remains
+        # available for a caller that genuinely needs the row mapping, but the
+        # default log line stays aggregate.
+        by_col: Dict[str, int] = {}
+        for entry in _POLISH_INVALID_LOG:
+            by_col[entry["col"]] = by_col.get(entry["col"], 0) + 1
+        detail = ", ".join(f"{col}x{count}" for col, count in sorted(by_col.items()))
+        warnings.warn(
+            f"Polish: {len(_POLISH_INVALID_LOG)} invalid value(s) treated as "
+            f"missing ({detail}); participant identifiers withheld from this log. "
+            f"Use get_polish_invalid_log() for the row mapping."
+        )
     return records
 
 
