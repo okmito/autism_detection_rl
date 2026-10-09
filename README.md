@@ -31,7 +31,7 @@ Note: a venv created on Linux (e.g. under WSL) cannot be run from Windows cmd an
 # Windows:  .venv-win\Scripts\python -m pytest tests -q
 # Linux:    .venv/bin/python -m pytest tests -q
 ```
-Expected: **487 passed, 0 skipped** on CPU. Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+Expected on this machine: **558 passed, 12 failed (all environmental — see "Tests — §21"), 78 skipped**. Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
 
 > **Test-count history.** The figure has been wrong in this file three times, in both
 > directions, so it is worth knowing how to check it rather than trusting it.
@@ -44,7 +44,7 @@ Expected: **487 passed, 0 skipped** on CPU. Useful flags: `-x` stop at first fai
 >   artifacts appeared missing.
 > - Later revisions quoted 126, then 163, then 191 as the suite grew with each
 >   correction pass. Each was correct when written.
-> - Current: **487 passed / 0 skipped.** Verify with the command above; the number is
+> - Current: **558 passed / 12 failed (environmental) / 78 skipped.** Verify with the command above; the number is
 >   the point-in-time count, not a target.
 
 > **Disk-space gotcha (2026-10-01):** a plain `pip install -r requirements.txt` pulls the **CUDA** build of torch (~2 GB of nvidia wheels) and fails with `No space left on device` — `/tmp` is a 3.7 GB tmpfs. Install CPU-only torch instead:
@@ -261,7 +261,7 @@ configs/config.yaml (Hydra)
 scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py, scripts/step5_policy_benchmark.py, scripts/step6_lambda_sweep.py, scripts/step7_rl_diagnosis.py, scripts/step8_evoi_scale_analysis.py, scripts/step9_v4_v7_gates.py, scripts/step10_external_validation.py, scripts/step17_outcome_explainability.py
 scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (browser demo)
 docs/prisma/screening_worksheet.csv
-tests/ (487 tests, all passing)
+tests/ (558 passed, 12 environmental failures, 78 skipped)
 ```
 
 ## Key invariants — §9-11
