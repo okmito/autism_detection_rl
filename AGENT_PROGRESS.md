@@ -1,8 +1,61 @@
 # Current Project State
 
-**Last updated:** 2026-10-09 (P3-outcome: explainability of the final screening outcome)
-**Operator request:** "verify everything and start building the idea we have planned" — the outcome-explainability phase (P3) of the roadmap, plus baseline restoration.
-**Branch state:** see git log (`feat/outcome-explainability`). **437 passed, 12 failed (all environmental), 78 skipped.**
+**Last updated:** 2026-10-09 (P4: the optional support layer after the result)
+**Operator request:** "continue" — finish the P4 support layer begun in the
+previous session (`src/support/` data modules + two test files existed, the
+assembly module and every engine/report test did not).
+**Branch state:** see git log (`feat/outcome-explainability`). **527 passed, 12 failed (all environmental), 78 skipped.**
+
+## 2026-10-09 (tenth pass) — P4: the support layer is complete, wired and tested
+
+The previous session had landed the support layer's *data* — `schemas.py`,
+`domains.py`, `questions.py`, `strategies.py`, `engine.py` — plus two contract
+test files. What was missing was the assembly module those files already
+referenced (`src/support/report.py`), every rule test for the engine, every test
+for the report, and any wiring into the demos. All four are now done.
+
+**Built (all post-hoc; the screening path is untouched):**
+
+| module | what it adds |
+|---|---|
+| `src/support/report.py` | `build_support_report()` — the single assembly point; adapters from `run_episode` output and from the `outcome-explanation/1.0` dict into the Pydantic contracts; evidence extraction with deterministic ids (`ev-obs-A3`); documented generation-status rule; report-level limitations (pending review, hypothesis-not-need, optionality) |
+| `src/support/engine.py` | `questions_to_offer()` — the suggested/optional split, the only permitted direction from screening data to a support question; preference abstentions no longer read as preferences; documented why `HYPOTHESIS_OPTED_IN` is never emitted |
+| `scripts/demo_app.py` | finished sessions retain their episode result + explanation; `POST /api/session/support`; the result payload carries the follow-up questionnaire |
+| `scripts/demo_static/index.html` | an "Optional support ideas" screen rendering backend fields only (status wording is presentation metadata for backend enum values; no suggestion text is composed client-side) |
+| `scripts/demo_live.py` | STEP 6c prints the questionnaire split, the assessment table, the offered suggestions with their reasons, the limitations and the disclaimer |
+| `docs/SUPPORT_LAYER_DESIGN.md` | design record: the safety rule, the evidence-type table, the honest-status table, method choices and rejections, open items |
+
+**The core property, enforced structurally and tested:** *a hypothesis never
+fires a recommendation.* An atypical observed response can put a follow-up
+question on the **suggested** list; only the person's own answer to it can
+produce a suggestion, which then carries its triggering assessment id and a
+plain-language `why_selected`. Domains with no Q-CHAT-10 linkage (sensory,
+transitions, daily living, accessibility) disclose that in their wording, can
+never be suggested from data, and can only be user-reported. Every strategy
+ships `pending_expert_review` and the report says so.
+
+**Two design corrections found while testing:**
+* the accessibility domain's yes/no question could fire the format
+  recommendation without a stated format — it is now a choice question, and a
+  choice alongside an abstention is recorded as `unknown`, not as a preference;
+* an unanswered question behaves exactly like a skipped questionnaire (locked by
+  a test): a missing question id is never read as "no".
+
+**Tests:** +90 in the support layer (schemas 28, registry 6, questions 8,
+strategies 7, engine 26, report 20) and +13 demo-wiring tests
+(`tests/test_support_demo.py`), all on synthetic fixtures. Suite:
+**437 → 527 passed**, the same 12 environmental failures, 78 skipped.
+
+**Verification performed:** the browser demo was driven end-to-end over HTTP
+(suggested/optional split, confirmed need, stated preference, explicit "no",
+abstention, skip, and a 400 on a choice question answered without a choice);
+the terminal demo ran the full pipeline on the real Saudi cohort and printed
+STEP 6c; `to_json_safe` round-trips through `json.dumps`; two builds of the same
+inputs are identical apart from `created_at`.
+
+**Deliberately not produced:** a batch `results/*.json` of assembled reports —
+that would be a store of people's own answers, and the consent/storage story
+does not exist yet (recorded in the design doc's open items).
 
 ## 2026-10-09 (ninth pass) — P3-outcome: explaining the final screening result
 
@@ -372,6 +425,7 @@ The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour t
 8. **V-4 / V-7:** Freeze MDE / comparison family; supervisor freezes the Polish denominator. Polish stays sealed until both.
 9. **V-9 (IRB)** and **V-10 (controlled access):** not started, longest lead time of anything remaining, and they cost nothing to begin now.
 10. After V-2, replace the "preliminary" tag on Step 3 artifacts with the supervisor-signed status.
+11. **P4 follow-ups (agent scope, unblocked):** a human expert-review pass over the strategy library (the only thing standing between the support content and any use beyond a research demonstration); a data-protection decision before any follow-up answer is stored; and unit tests for `scripts/demo_live.py` itself (open item 10).
 
 ### Known open items (deliberately not fixed — recorded so they are not lost)
 
@@ -384,11 +438,13 @@ The 2026-09-30 entry said 43 tests. That figure predated the 11 demo-behaviour t
 | 5 | `src/ablation/runner.py` is a string table; `ablation_report` is called from nowhere, so none of the seven §20 ablations has run. AB-3 is blocked by V-6. | Needs the λ sign-off. |
 | 6 | `configs/config.yaml` is never parsed by any code — no `yaml.safe_load`, no OmegaConf, no hydra. Every setting is duplicated as a literal. | Tech debt; it is what let the P0-6-style drift recur. |
 | 7 | `src/data/schema.py` validation and `dedupe.py` never invoked. `dedupe._record_hash` includes `label`, so a cross-source duplicate with a *disagreeing* label is not flagged. | Low urgency. |
-| 8 | `tests/test_trace_belief_update.py:27` — the sequential-consistency assertion is commented out and replaced with `pass`. | Cheap to close. |
-| 9 | `src/explain/shap_baseline.py` is **not SHAP**: `import shap` sits in `try:`/`pass` and the value is discarded; the attribution is a single-flip delta, which is not additive. | Explainability honesty; P3. |
-| 10 | `scripts/demo_live.py` has zero test coverage. | P4. |
-| 11 | `BUDGET = 6` duplicated in `configs/config.yaml:6`, `demo_app.py:47`, `demo_static/index.html:187`; `Session._legal()` never offers STOP so the demo cannot stop early; the UI says "of 10 questions" while the budget is 6. | Demo/UX; P4. |
+| 8 | ~~`tests/test_trace_belief_update.py:27` — the sequential-consistency assertion was commented out and replaced with `pass`~~ ✅ closed in the ninth pass | — |
+| 9 | ~~`src/explain/shap_baseline.py` is **not SHAP**~~ ✅ closed in the ninth pass — documented as a single-flip delta, retained only for artifact compatibility, with a contract test locking the disclosure | — |
+| 10 | `scripts/demo_live.py` has zero test coverage. | P4. **Partly closed:** STEP 6c is reachable and was smoke-tested end-to-end on the real cohort, but the script itself still has no unit tests. |
+| 11 | `BUDGET = 6` duplicated in `configs/config.yaml:6`, `demo_app.py:47`, `demo_static/index.html:187`; `Session._legal()` never offers STOP so the demo cannot stop early; the UI says "of 10 questions" while the budget is 6. | Demo/UX; P4. The STOP gap is now covered by the frontend's explicit "End session" control; the constant duplication remains. |
 | 12 | Isotonic calibration moves ECE the wrong way on a broad uniform state sample (0.0487 → 0.0729) while improving it along the B=6 episode path. The demo uses Platt for this reason. | Open, not resolved. |
+| 13 | The P4 strategy library is entirely `pending_expert_review`; no human has reviewed any of it. | A human review pass is required before any use beyond research demonstration; the assembled report discloses the gate. |
+| 14 | No P4 batch results artifact is produced, by design: an assembled report contains the person's own answers, and there is no consent/retention story yet. | Deliberate — recorded in `docs/SUPPORT_LAYER_DESIGN.md` §8. |
 
 ## Important Decisions
 - **NZ 6075 pooled file retained unchanged; NOT used for training** — HUMAN ACTION REQUIRED path enforced in `load_nz()`. Even after V-1, the 6,075-row file stays untouched.

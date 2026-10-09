@@ -3,7 +3,8 @@
 Pipeline shown (matches spec sections 10 / 12 / 14 / 16 / 18 / 19):
   data -> preprocessing/encoding -> predictor training -> live episode
   (policy picks which questions to ask) -> decision + counterfactual
-  explanation -> policy comparison on the test set -> exact DP optimum.
+  explanation -> optional follow-up questionnaire and support ideas
+  -> policy comparison on the test set -> exact DP optimum.
 
 Run from repo root:
   python scripts/demo_live.py               # auto demo (~2-3 min on CPU)
@@ -182,6 +183,50 @@ def main() -> int:
         label_source=rec["label_source"], budget=BUDGET,
         tag="terminal demo — research prototype, not a diagnostic device")
     print(render_text(explanation))
+
+    # ------------------------------------------------------------- STEP 6c
+    hr("STEP 6c - OPTIONAL SUPPORT IDEAS (asked after the result, always skippable)")
+    print("the screening result never produces a suggestion on its own. The only")
+    print("route to one is what the person says in this follow-up questionnaire:\n")
+    from src.support.engine import questions_to_offer
+    from src.support.report import build_support_report, evidence_from_episode
+
+    suggested, optional = questions_to_offer(evidence_from_episode(ep))
+    print(f"  suggested by your answers ({len(suggested)}):")
+    for q in suggested:
+        print(f"    - {q.text}")
+    print(f"  offered anyway, entirely optional ({len(optional)}):")
+    for q in optional:
+        print(f"    - {q.text}")
+    print()
+    # Demonstration answers: one endorsement, one preference, one explicit "no",
+    # one abstention. Nothing here is derived from the screening result.
+    answers = [
+        {"question_id": suggested[0].question_id if suggested else "q_comm_support",
+         "value": "yes"},
+        {"question_id": "q_comm_preference", "value": "yes", "choice": "written"},
+        {"question_id": "q_emotion_support", "value": "no"},
+        {"question_id": "q_sensory_support", "value": "unsure"},
+    ]
+    report = build_support_report(
+        episode_result=ep, explanation=explanation,
+        followup_answers=answers, result_id="demo-terminal",
+        model_name="MaskedPredictor",
+        model_version=str(getattr(predictor, "VERSION", "v2")),
+        input_reference="terminal-demo")
+    for a in report.support_assessments:
+        print(f"  {a.domain:<28} {a.status.value}")
+    print()
+    for r in report.recommendations:
+        print(f"  * {r.title} ({r.domain})")
+        print(f"      {r.why_selected}")
+        print(f"      source: {r.source_attribution}")
+    if not report.recommendations:
+        print("  nothing offered - no follow-up answer asked for it")
+    print()
+    for lim in report.limitations:
+        print(f"  ! {lim}")
+    print(f"\n  {report.disclaimer}")
 
     # ------------------------------------------------------------- STEP 7
     hr(f"STEP 7 - POLICY COMPARISON ON THE FULL TEST SET (B={BUDGET} episodes)")

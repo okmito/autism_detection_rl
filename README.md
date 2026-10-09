@@ -108,6 +108,21 @@ terminal demo prints the same object at STEP 6b. Design record and measured
 faithfulness: `docs/EXPLAINABILITY_OUTCOME_PLAN.md`,
 `results/outcome_explainability_saudi.json` (Step 17).
 
+**Optional support ideas (P4).** After the result, the demo offers an optional,
+skippable follow-up questionnaire and a set of *support ideas* assembled by
+`src/support/`. The one rule the layer is built around is structural: **a
+hypothesis never fires a recommendation.** The only route from an observed
+screening answer to a suggestion runs through the person — an atypical response
+can put a question on the *suggested* list, and only their own answer to it can
+produce a suggestion, always carrying the assessment id that triggered it and a
+plain-language reason. Domains the questionnaire does not cover (sensory,
+transitions, daily living, accessibility) say so in their wording and can only
+ever be user-reported. Every suggestion is curated project content pending
+human expert review, and the report discloses that. Backend:
+`POST /api/session/support`, schema `support-report/1.0`; the terminal demo
+prints the same object at STEP 6c. Design record:
+`docs/SUPPORT_LAYER_DESIGN.md`.
+
 **What the demo does and does not show.** It serves `GreedyIGPolicy` (information
 gain) and `RandomPolicy` only — the DQN/PPO arms are benchmarked offline in
 Step 5, not here. Two things on the page are deliberately unflattering, because they
@@ -187,7 +202,7 @@ records = load_dataset("nz", synthetic=True)
 | `Master-Project-Specification_FINAL.md` | source of truth (spec §1-§27) |
 | `docs/EXPLAINABILITY_OUTCOME_PLAN.md` | P3-outcome design record: the verified outcome path, exact group-Shapley attribution, counterfactuals, prior-sensitivity band, measured faithfulness |
 
-**Freshness (updated 2026-10-01).** Living documents — `AGENT_PROGRESS.md`, `README.md`, `AUDIT_REPORT.md`, `DATA_VERIFICATION_REPORT.md`, `STATE_COUNT_VERIFICATION.md`, `diagnosisReady.md`, `RL_TRAINING_REPORT.md`, `POLICY_BENCHMARK_REPORT.md`, `V1_NZ_DATASET_RESOLUTION.md`, `V2_PRISMA_SEARCH_LOG.md` — are all current. `AUDIT_UPDATE_2026-09-04.md` is an intentionally **frozen historical snapshot**; its figures are superseded and it carries a header saying so. Current state is always `AGENT_PROGRESS.md` (163 tests, 0 skipped).
+**Freshness (updated 2026-10-01).** Living documents — `AGENT_PROGRESS.md`, `README.md`, `AUDIT_REPORT.md`, `DATA_VERIFICATION_REPORT.md`, `STATE_COUNT_VERIFICATION.md`, `diagnosisReady.md`, `RL_TRAINING_REPORT.md`, `POLICY_BENCHMARK_REPORT.md`, `V1_NZ_DATASET_RESOLUTION.md`, `V2_PRISMA_SEARCH_LOG.md` — are all current. `AUDIT_UPDATE_2026-09-04.md` is an intentionally **frozen historical snapshot**; its figures are superseded and it carries a header saying so. Current state is always `AGENT_PROGRESS.md` (527 passed, 12 failed — all environmental, 78 skipped).
 
 > ⚠️ **Five corrections are in force. Read these before citing any number.**
 >
@@ -236,6 +251,7 @@ src/solvers/exact_custom.py, exact_adapter.py
 src/models/masked_predictor.py
 src/policies/dqn.py, ppo.py, greedy.py, random_policy.py, irt_cat.py, dqn_cat.py, static_rfe.py, static_fixed.py, beta_greedy.py, replay.py
 src/explain/attribution.py, counterfactual.py, uncertainty.py, outcome.py, limitations.py, render.py, trace.py, shap_baseline.py (deprecated: not SHAP)
+src/support/schemas.py, domains.py, questions.py, strategies.py, engine.py, report.py
 src/eval/metrics.py, bootstrap.py, power.py, fwer.py, subgroup.py, gates.py, external_validation.py, qchat10_subset.py
 src/ablation/runner.py
 configs/config.yaml (Hydra)
@@ -273,7 +289,7 @@ Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/S
 
 ## Tests — §21
 ```
-pytest tests -q   # 437 passed, 12 failed (all environmental — see below), 78 skipped
+pytest tests -q   # 527 passed, 12 failed (all environmental — see below), 78 skipped
 ```
 
 **Test-count history.** The figure has been wrong in this file several times, in
@@ -282,8 +298,19 @@ Verify with the command above; the number is the point-in-time count, not a targ
 Early revisions claimed 79 / 126 / 163 / 191 / 204 / 453 / 487 — each correct when
 written on the machine that wrote it.
 
-**2026-10-09 (branch `feat/outcome-explainability`):** 437 passed, 12 failed, 78
-skipped. All 12 failures are environmental or pre-existing and are itemised in
+**P4 support-layer tests (`src/support/`, all synthetic fixtures):** 90 tests in
+`tests/test_support_schemas.py` (28), `test_support_registry.py` (6),
+`test_support_questions.py` (8), `test_support_strategies.py` (7),
+`test_support_engine.py` (26) and `test_support_report.py` (20), plus 13 demo-wiring
+tests in `tests/test_support_demo.py`. They lock the layer's core property (a
+hypothesis never fires a recommendation), the observed/derived/user-reported type
+distinction, report cross-reference resolution, the JSON round-trip, and the
+browser-demo contract (suggested vs optional questions, skip path, no invented
+client-side copy).
+
+**2026-10-09 (branch `feat/outcome-explainability`):** 527 passed, 12 failed, 78
+skipped (437 + 90 P4 support-layer tests). All 12 failures are environmental or
+pre-existing and are itemised in
 `AGENT_PROGRESS.md` (ninth pass): 6 × frozen-v2 artifact-hash pins (the recorded
 hashes came from another machine; regeneration here is deterministic), 1 × the
 retained Step-14 evaluation artifact (absent on this machine, and Step 14 now

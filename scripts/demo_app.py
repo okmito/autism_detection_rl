@@ -350,6 +350,12 @@ class Session:
         self.trace: list[dict] = []
         self.pending: int | None = None
         self.finished = False
+        # P4: the finished session is the input to the support layer. Both are
+        # kept so the support report can be assembled without re-running
+        # anything (read-only with respect to the screening outcome).
+        self.result_id = f"demo-{uuid.uuid4().hex[:8]}"
+        self.episode_result: dict | None = None
+        self.explanation: dict | None = None
 
     def _legal(self) -> list[int]:
         return get_legal_items(self.state)
@@ -444,15 +450,20 @@ class Session:
         decision = "REFERRAL_RECOMMENDED" if p >= TAU else "NO_REFERRAL_INDICATED"
         cf = find_counterfactual(self.state, p, predict, tau=TAU)
         self.finished = True
+        # Retained for the support layer (P4). The demo keeps its own decision
+        # vocabulary; src/explain/outcome.py normalises both spellings.
+        self.episode_result = {
+            "p_hat": p, "decision": decision, "trace": self.trace,
+            "items_asked": list(self.items_asked),
+            "stop_reason": reason, "final_state": self.state}
+        self.explanation = self._explain(self.episode_result)
         return {"p_hat": p, "decision": decision, "asked": self.asked,
                 "items_asked": [f"A{j + 1}" for j in self.items_asked],
                 "trace": self.trace, "counterfactual": cf,
                 "true_label": int(self.record["label"]), "stop_reason": reason,
                 "selection_summary": self._selection_summary(),
-                "explanation": self._explain({
-                    "p_hat": p, "decision": decision, "trace": self.trace,
-                    "items_asked": self.items_asked,
-                    "stop_reason": reason, "final_state": self.state})}
+                "explanation": self.explanation,
+                "followup": self.followup_payload()}
 
     def run_auto(self) -> dict:
         ep = run_episode(self.record, BUDGET, 0, self.policy, predict, 0.0, tau=TAU)
@@ -467,6 +478,8 @@ class Session:
                 ep["trace"][st]["selection"] = t.get("selection")
         self.trace = ep["trace"]
         self.finished = True
+        self.episode_result = ep
+        self.explanation = self._explain(ep)
         return {"p_hat": float(ep["p_hat"]),
                 "decision": "REFERRAL_RECOMMENDED" if ep["p_hat"] >= TAU else "NO_REFERRAL_INDICATED",
                 "asked": len(ep["items_asked"]),
@@ -474,7 +487,8 @@ class Session:
                 "trace": ep["trace"], "counterfactual": cf,
                 "true_label": int(self.record["label"]), "stop_reason": ep["stop_reason"],
                 "selection_summary": self._selection_summary(),
-                "explanation": self._explain(ep)}
+                "explanation": self.explanation,
+                "followup": self.followup_payload()}
 
     def _replayed_trace(self) -> list[dict]:
         """Re-walk the realised item sequence, diagnosing each decision point.
@@ -503,6 +517,69 @@ class Session:
     def policy_name_is_greedy(self) -> bool:
         return isinstance(self.policy, GreedyIGPolicy)
 
+    # ------------------------------------------------------------------
+    # P4 — optional follow-up questionnaire and the support report
+    # ------------------------------------------------------------------
+
+    def followup_payload(self) -> dict:
+        """The optional follow-up questionnaire, in the wording the support
+        layer owns.
+
+        Split into ``suggested`` (the only questions the observed responses
+        legitimately invite asking) and ``optional`` (everything else). Both
+        are skippable; the split exists so the UI never implies the screening
+        result found a difficulty.
+        """
+        from src.support.engine import questions_to_offer
+        from src.support.questions import QUESTIONS_BY_ID
+        from src.support.report import evidence_from_episode
+        from src.support.schemas import AnswerValue
+
+        if self.episode_result is None:
+            suggested, optional = [], list(QUESTIONS_BY_ID.values())
+        else:
+            suggested, optional = questions_to_offer(
+                evidence_from_episode(self.episode_result))
+        answer_values = [v.value for v in AnswerValue]
+        return {
+            "note": ("Optional. Everything here is about what you would find "
+                     "useful — the screening result does not decide it, and "
+                     "every question can be skipped."),
+            "answer_values": answer_values,
+            "suggested": [_question_payload(q, answer_values) for q in suggested],
+            "optional": [_question_payload(q, answer_values) for q in optional],
+        }
+
+    def support(self, answers) -> dict:
+        """Assemble the validated support report for this finished session.
+
+        Read-only: the screening result and its explanation are the ones the
+        session already produced. Raises ValueError on invalid answers so the
+        API returns a human-readable 400 instead of a half-built report.
+        """
+        from src.support.report import build_support_report
+        from src.support.schemas import to_json_safe
+
+        if not self.finished or self.episode_result is None:
+            raise ValueError("finish the screening session first — support "
+                             "ideas follow the result, never precede it")
+        report = build_support_report(
+            episode_result=self.episode_result,
+            explanation=self.explanation,
+            followup_answers=answers or [],
+            result_id=self.result_id,
+            model_name="MaskedPredictor",
+            model_version=str(MaskedPredictor.VERSION),
+            input_reference="demo-session")
+        return to_json_safe(report)
+
+
+def _question_payload(q, answer_values) -> dict:
+    return {"question_id": q.question_id, "domain_id": q.domain_id,
+            "text": q.text, "helper_text": q.helper_text,
+            "choices": list(q.choices) if q.choices else None,
+            "is_preference": q.is_preference_question,
+            "answer_values": answer_values}
 
 
 def api_start(req: dict) -> dict:
@@ -526,6 +603,24 @@ def api_answer(req: dict) -> dict:
     if s is None:
         raise ValueError("unknown session - start a new one")
     return s.answer(value=req.get("value"), stop=bool(req.get("stop")))
+
+
+def api_support(req: dict) -> dict:
+    """P4: assemble the support report for a finished session.
+
+    ``answers`` is the optional follow-up questionnaire; an empty or missing
+    list means it was skipped, which is a valid outcome (the report then says
+    so, domain by domain).
+    """
+    sid = req.get("session_id", "")
+    s = S["sessions"].get(sid)
+    if s is None:
+        raise ValueError("unknown session - start a new one")
+    answers = req.get("answers") or []
+    if not isinstance(answers, list):
+        raise ValueError("answers must be a list of "
+                         "{question_id, value[, choice]} objects")
+    return {"report": s.support(answers)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -556,6 +651,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(api_start(req))
             elif self.path == "/api/session/answer":
                 self._json(api_answer(req))
+            elif self.path == "/api/session/support":
+                self._json(api_support(req))
             else:
                 self._json({"error": "not found"}, 404)
         except Exception as e:

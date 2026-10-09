@@ -380,6 +380,7 @@
       as a medical diagnosis.
     </p>
     <div class="btn-row" style="margin-top:16px">
+      <button class="btn ghost" id="supportBtn" type="button">Optional support ideas</button>
       <button class="btn" id="newBtn" type="button">Start new screening</button>
     </div>
     <div id="resultErr"></div>
@@ -412,6 +413,20 @@
     </details>
   </section>
 
+  <!-- ================================================= SUPPORT SCREEN (P4) -->
+  <section class="card" id="supportScreen" hidden aria-labelledby="supportTitle">
+    <div class="card-title" id="supportTitle">Optional support ideas</div>
+    <p class="dbody" id="supportNote"></p>
+    <div id="supportForm"></div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn" id="supportSubmit" type="button">Show support ideas</button>
+      <button class="btn ghost" id="supportSkip" type="button">Skip — offer nothing</button>
+      <button class="btn ghost" id="supportBack" type="button">Back to result</button>
+    </div>
+    <div id="supportErr"></div>
+    <div id="supportReport" hidden></div>
+  </section>
+
   <footer>
     <p>This research prototype is intended for screening research and does not
     provide a medical diagnosis.</p>
@@ -438,6 +453,12 @@
                                -> {finished:false, belief_before, belief_after,
                                    trace_step, asked, next{...}, selection{...}}
                                -> {finished:true, result{...}}
+      POST /api/session/support  {session_id, answers[]}
+                                -> {report{...}}   (schema support-report/1.0)
+
+   The optional support screen renders only what the backend returns in
+   result.followup (src/support/questions.py) and report (src/support/report.py
+   plus engine.py): no suggestion text, status or reason is composed client-side.
 
    Every budget, policy list, threshold and explanation shown here is read from
    those responses. There is deliberately NO hard-coded budget constant.
@@ -519,6 +540,10 @@ function friendlyError(err) {
     return 'That answer is not one of the available options.';
   if (/at least one question/i.test(raw))
     return 'Answer at least one question before ending the session.';
+  if (/invalid follow-up answers/i.test(raw))
+    return 'One of the answers is not complete — choice questions need a value from their list.';
+  if (/finish the screening session/i.test(raw))
+    return 'This session has already finished; support ideas follow the result.';
   return 'Something went wrong while processing this answer.';
 }
 function showError(hostId, err) {
@@ -813,6 +838,7 @@ function showResult(res, policyId) {
     state.lastQuestionCode, 'resWhyBody');
 
   renderOutcome(res.explanation);
+  state.followup = res.followup || null;
 
   const cf = res.counterfactual;
   $('resCfBody').innerHTML = cf
@@ -941,6 +967,185 @@ function renderTrace(trace) {
       '</td></tr>').join('') + '</tbody>';
 }
 
+/* ---------------------------------------------------------------------------
+   Optional support ideas — P4.
+   Renders ONLY what the backend returned: result.followup (the questionnaire,
+   split into suggested / optional by src/support/engine.py) and the assembled
+   report (schema support-report/1.0). Status wording is presentation metadata
+   for the backend's enum values; every other string comes from the backend.
+   --------------------------------------------------------------------------- */
+const SUPPORT_STATUS_PRESENTATION = {
+  user_confirmed:        { label: 'You said you would like support here', tone: 'good' },
+  user_stated_preference:{ label: 'Your stated preference', tone: 'good' },
+  hypothesis_from_observed: { label: 'Worth exploring — suggested by your answers, not a finding', tone: 'warn' },
+  user_declined:         { label: 'You said no for now', tone: '' },
+  unknown:               { label: 'You left this open', tone: '' },
+  insufficient_evidence: { label: 'Nothing known about this area', tone: '' }
+};
+const BASIS_PRESENTATION = {
+  user_confirmed:     'offered because you asked for it',
+  hypothesis_opted_in:'offered because you opted in',
+  general_guidance:   'general practice, triggered by your preference'
+};
+
+function showSupportScreen() {
+  $('resultScreen').hidden = true;
+  $('supportScreen').hidden = false;
+  $('supportReport').hidden = true;
+  $('supportReport').innerHTML = '';
+  clearError('supportErr');
+  renderSupportForm(state.followup);
+  $('supportSubmit').focus();
+}
+
+function renderSupportForm(fu) {
+  state.followup = fu || null;
+  const box = $('supportForm');
+  $('supportNote').textContent = (fu && fu.note) ? fu.note : '';
+  const suggested = (fu && fu.suggested) || [];
+  const optional = (fu && fu.optional) || [];
+  if (!suggested.length && !optional.length) {
+    box.innerHTML = '<p class="dbody">No follow-up questions were returned ' +
+      'for this session.</p>';
+    return;
+  }
+  const values = (fu && fu.answer_values && fu.answer_values.length)
+    ? fu.answer_values
+    : ['yes', 'no', 'unsure', 'not_applicable', 'prefer_not_to_answer'];
+  const group = (qs, label) => qs.length
+    ? '<p class="field-label" style="margin-top:14px">' + esc(label) + '</p>' +
+      qs.map(q => renderSupportQuestion(q, values)).join('')
+    : '';
+  box.innerHTML =
+    group(suggested, 'Your answers suggest these may be worth exploring — you decide') +
+    group(optional, 'Anything else, entirely optional');
+}
+
+function renderSupportQuestion(q, values) {
+  const pills = values.map(v =>
+    '<button type="button" class="opt" data-support-answer="' + esc(v) + '" ' +
+    'aria-pressed="false" style="padding:8px 10px">' +
+    '<span class="dot" aria-hidden="true"></span>' +
+    '<span class="lbl" style="font-size:13px">' + esc(v.replace(/_/g, ' ')) +
+    '</span></button>').join('');
+  const choice = (q.choices && q.choices.length)
+    ? '<label style="display:block;margin-top:8px;font-size:12.5px;color:var(--muted)">' +
+      'Preferred format <select data-support-choice="' + esc(q.question_id) +
+      '" style="margin-left:6px"><option value="">choose\u2026</option>' +
+      q.choices.map(c => '<option value="' + esc(c) + '">' +
+        esc(c.replace(/_/g, ' ')) + '</option>').join('') + '</select></label>'
+    : '';
+  return '<div class="note" style="margin-top:10px" data-support-q="' +
+    esc(q.question_id) + '">' +
+    '<div style="font-size:14px;font-weight:560;color:var(--text)">' +
+    esc(q.text) + '</div>' +
+    (q.helper_text
+      ? '<div style="font-size:12.5px;color:var(--muted);margin-top:4px">' +
+        esc(q.helper_text) + '</div>'
+      : '') +
+    '<div class="opts" role="group" aria-label="Answer options" ' +
+    'style="grid-template-columns:repeat(auto-fit,minmax(104px,1fr));margin-top:8px">' +
+    pills + '</div>' + choice + '</div>';
+}
+
+function collectSupportAnswers() {
+  /* An unanswered question is skipped, never treated as "no". */
+  const out = [];
+  document.querySelectorAll('[data-support-q]').forEach(block => {
+    const qid = block.getAttribute('data-support-q');
+    const pressed = block.querySelector('.opt[aria-pressed="true"]');
+    if (!pressed) return;
+    const entry = { question_id: qid,
+                    value: pressed.getAttribute('data-support-answer') };
+    const sel = block.querySelector('[data-support-choice]');
+    if (sel && sel.value) entry.choice = sel.value;
+    out.push(entry);
+  });
+  return out;
+}
+
+async function submitSupport(answers) {
+  if (!state.sessionId || !state.finished) return;
+  setBusy($('supportSubmit'), true, 'Assembling\u2026');
+  setStatus('Assembling optional support ideas\u2026', true);
+  try {
+    const r = await api('/api/session/support',
+      { session_id: state.sessionId, answers: answers });
+    renderSupportReport(r.report);
+  } catch (e) {
+    showError('supportErr', e);
+  } finally {
+    setBusy($('supportSubmit'), false);
+    setStatus('', false);
+  }
+}
+
+function renderSupportReport(rep) {
+  const box = $('supportReport');
+  if (!rep) {
+    box.innerHTML = '<p class="dbody">No support report was returned.</p>';
+    box.hidden = false;
+    return;
+  }
+  const parts = [];
+  const statuses = (rep.support_assessments || []);
+  if (statuses.length) {
+    const rows = statuses.map(a => {
+      const p = SUPPORT_STATUS_PRESENTATION[a.status] ||
+        { label: a.status, tone: '' };
+      const ev = (a.supporting_evidence || []).length
+        ? ' <span class="chip" style="border-color:var(--line)">' +
+          a.supporting_evidence.map(e => esc(e.item_code || e.source_reference))
+            .join(', ') + '</span>'
+        : '';
+      return '<li><b>' + esc(p.label) + '</b> \u2014 ' +
+        esc(String(a.domain).replace(/_/g, ' ')) + ev +
+        (a.user_preference
+          ? ' <span class="chip" style="border-color:var(--line)">' +
+            esc(a.user_preference) + '</span>'
+          : '') + '</li>';
+    }).join('');
+    parts.push('<p class="field-label" style="margin-top:10px">What you told us</p>' +
+      '<ul style="margin:6px 0 0;padding-left:18px" class="dbody">' + rows + '</ul>');
+  }
+
+  const recs = rep.recommendations || [];
+  if (recs.length) {
+    parts.push('<p class="field-label" style="margin-top:16px">Optional ideas</p>' +
+      recs.map(r => {
+        const basis = BASIS_PRESENTATION[r.basis] || r.basis;
+        const limits = (r.limitations || []).length
+          ? '<ul style="margin:6px 0 0;padding-left:18px" class="dbody">' +
+            r.limitations.map(l => '<li>' + esc(l) + '</li>').join('') + '</ul>'
+          : '';
+        return '<div class="note" style="margin-top:10px">' +
+          '<div style="font-size:14px;font-weight:600;color:var(--text)">' +
+          esc(r.title) + '</div>' +
+          '<div class="dbody" style="margin-top:4px">' + esc(r.description) + '</div>' +
+          '<div class="dbody" style="margin-top:4px"><b>Why you are seeing this:</b> ' +
+          esc(r.why_selected || '') + ' (' + esc(basis) + ').</div>' +
+          '<div class="dbody" style="margin-top:4px">Source: ' +
+          esc(r.source_attribution || '') + ' \u00b7 review status: ' +
+          esc(r.review_status || '') + '.</div>' + limits + '</div>';
+      }).join(''));
+  } else {
+    parts.push('<p class="dbody" style="margin-top:14px">Nothing is being ' +
+      'offered: no need was confirmed and no preference was stated. ' +
+      'Suggestions can only follow what you tell us.</p>');
+  }
+
+  if (rep.limitations && rep.limitations.length) {
+    parts.push('<ul style="margin:12px 0 0;padding-left:18px" class="dbody">' +
+      rep.limitations.map(l => '<li>' + esc(l) + '</li>').join('') + '</ul>');
+  }
+  parts.push('<p style="margin-top:10px" class="dbody"><b>' +
+    esc(rep.disclaimer || '') + '</b></p>');
+
+  box.innerHTML = parts.join('');
+  box.hidden = false;
+  box.scrollIntoView({ block: 'nearest' });
+}
+
 /* ----------------------------------------------------------------- reset */
 function resetAll() {
   state.sessionId = null;
@@ -949,6 +1154,7 @@ function resetAll() {
   state.finished = false;
   state.lastSelection = null;
   state.lastQuestionCode = null;
+  state.followup = null;
   $('quizScreen').hidden = true;
   $('resultScreen').hidden = true;
   $('startScreen').hidden = false;
@@ -961,6 +1167,10 @@ function resetAll() {
   $('resOutcomeBody').innerHTML = '';
   $('resTrace').innerHTML = '';
   $('whyBody').innerHTML = '';
+  $('supportForm').innerHTML = '';
+  $('supportReport').innerHTML = '';
+  $('supportReport').hidden = true;
+  $('supportScreen').hidden = true;
   setAnswersEnabled(false);
   setStatus('', false);
   clearError('startErr');
@@ -1041,6 +1251,22 @@ $('answers').addEventListener('click', ev => {
   if (b && !b.disabled) answer(Number(b.dataset.value));
 });
 $('stopBtn').addEventListener('click', stopEarly);
+$('supportBtn').addEventListener('click', showSupportScreen);
+$('supportSubmit').addEventListener('click', () => submitSupport(collectSupportAnswers()));
+$('supportSkip').addEventListener('click', () => submitSupport([]));
+$('supportBack').addEventListener('click', () => {
+  $('supportScreen').hidden = true;
+  $('resultScreen').hidden = false;
+  $('newBtn').focus();
+});
+$('supportForm').addEventListener('click', ev => {
+  const b = ev.target.closest('.opt[data-support-answer]');
+  if (!b) return;
+  const group = b.closest('[data-support-q]');
+  group.querySelectorAll('.opt[aria-pressed="true"]')
+    .forEach(o => o.setAttribute('aria-pressed', 'false'));
+  b.setAttribute('aria-pressed', 'true');
+});
 $('abortBtn').addEventListener('click', resetAll);
 $('newBtn').addEventListener('click', resetAll);
 
