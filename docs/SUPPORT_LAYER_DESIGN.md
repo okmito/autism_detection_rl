@@ -1,34 +1,37 @@
-# Support Layer — Design Record (P4)
+# Support Layer — Design Record (P4, revised)
 
 **Date:** 2026-10-09 · **Claim boundary: research prototype. Screening support only.
 NOT a diagnosis, NOT a diagnostic device, NOT clinically validated.**
 
-P4 adds what happens **after** the screening result and its explanation: an
-optional, skippable follow-up questionnaire and a deterministic set of
-*support ideas*. This document records what was built, the one safety property
-the layer is designed around, and what it deliberately does not do. The
-implementation lives under `src/support/`; the P3-outcome record for the
+**Revision note.** The first version of this layer (schema `support-report/1.0`)
+asked a *second* questionnaire after the screening result and required an
+endorsement before any suggestion could be offered. That design was replaced:
+the follow-up questionnaire, its answer vocabulary, its validation, its API
+route and its screen are **removed**. The support report is now generated
+automatically from the answers the person already gave. This record describes
+the revised design (`support-report/2.0`); the P3-outcome record for the
 explanation it consumes is `docs/EXPLAINABILITY_OUTCOME_PLAN.md`.
 
 ---
 
-## 1. The problem this layer has to not create
+## 1. What the revision had to fix first
 
-The screening result is a **calibrated model score plus a thresholded referral
-recommendation**. It is not a finding of need, and on this project's datasets it
-cannot be: the labels are questionnaire-derived (label circularity is measured
-and disclosed, `DATA_VERIFICATION_REPORT.md`). A layer that turns a screening
-score into "your child needs help with communication" would invent a need from a
-correlated feature — the exact failure mode this project's audit trail exists to
-prevent.
+Before any mapping could be trusted, the questionnaire itself had to be pinned
+down. `scripts/demo_app.py` carried a hand-written list of item wording that had
+**drifted from the verified feature contract** (`src/data/qchat10_contract.py`,
+signed off in `docs/QCHAT10_PROJECTION_APPROVAL.md`): from A3 onward, the demo
+asked about one construct while the answer was recorded as the feature for a
+*different* construct. No test compared the two, so eight questions were
+mis-labelled and the support linkage written against them was wrong in three
+places.
 
-So the layer is built around one structural rule:
-
-> **A hypothesis never fires a recommendation.**
-
-Only the person's own follow-up answer (or their stated preference) can produce
-a suggestion, and every suggestion carries the assessment id that triggered it
-plus a plain-language `why_selected`.
+`src/support/questionnaire.py` now derives the instrument from the contract —
+construct, feature id, Polish variable and scoring direction are all read from
+it, never restated — and `tests/test_support_questionnaire.py` asserts that the
+demo's displayed wording, the contract's feature order and the support layer's
+item table agree. Correcting the wording is display-only: the stored 0/1 value
+and its feature index are unchanged, so screening behaviour, the RL environment
+and every benchmark artifact are byte-identical.
 
 ## 2. Architecture
 
@@ -36,127 +39,145 @@ plus a plain-language `why_selected`.
 run_episode ──► {p_hat, decision, final_state, trace, items_asked, stop_reason}
                      │
                      ▼
-     src/explain/outcome.py :: explain_outcome(...)   (schema outcome-explanation/1.0)
+     src/explain/outcome.py :: explain_outcome(...)   (outcome-explanation/1.0)
                      │
                      ▼
-     src/support/report.py :: build_support_report(episode_result, explanation,
-                                                   followup_answers)
-        ├─ schemas.py      Pydantic contracts; every invariant is a validator
-        ├─ domains.py      which observed items may justify ASKING about a domain
-        ├─ questions.py    the optional follow-up questionnaire (neutral wording)
-        ├─ strategies.py   curated strategies, all pending human expert review
-        ├─ engine.py       deterministic rules; assessments → recommendations
-        └─ report.py       assembly + adaptation from the explanation schema
+     src/support/report.py :: build_support_report(episode_result, explanation)
+        ├─ questionnaire.py   the instrument, derived from the verified contract
+        ├─ schemas.py         Pydantic contracts (support-report/2.0)
+        ├─ domains.py         which items may justify which area, + unmeasured areas
+        ├─ strategies.py      curated content, provenance, review status
+        ├─ engine.py          deterministic rules; assessments → suggestions
+        └─ report.py          assembly + instrument-level validation
                      │
                      ▼
-        ScreeningReport (schema support-report/1.0)
-             ├─► scripts/demo_app.py     POST /api/session/support  (browser demo)
-             └─► scripts/demo_live.py    STEP 6c                    (terminal demo)
+        ScreeningReport (support-report/2.0)
+             ├─► scripts/demo_app.py    result payload (support_report)
+             └─► scripts/demo_live.py   STEP 6c
 ```
 
 Nothing here trains, retrains or mutates anything. The support layer is a pure
-consumer of the episode result, the explanation object, and the person's own
+consumer of the episode result, the explanation object and the recorded
 answers. The environment, the reward, τ, the seeds, the splits and both frozen
-predictors are untouched; every benchmark artifact is unaffected.
+predictors are untouched.
 
-## 3. Evidence types are a type-level distinction
+## 3. The safety property, restated
 
-`EvidenceItem.source_type` has exactly three members, and no field name or
-convention can blur them:
+The previous rule was *"a hypothesis never fires a recommendation"* (only a
+user-confirmed need fired). With no second questionnaire that rule would mean no
+suggestions at all, so it is replaced by:
 
-| source type | meaning | who produces it |
+> **A suggestion may only be offered because of an answer that was actually
+> given, and it must name the items and the responses that triggered it.**
+
+Enforced structurally, in three places:
+
+1. `SupportRecommendation.triggering_question_ids` + `triggering_responses` are
+   required, validated against the instrument, and their length must match
+   (`src/support/schemas.py`);
+2. `ScreeningReport` fails closed: a suggestion whose trigger ids are not part
+   of the report's own recorded evidence is a validation error, not a dropped
+   field;
+3. the engine's rule table is per-strategy: a strategy fires only when *its own*
+   trigger items were answered atypically.
+
+Framing follows the same rule: a suggestion says it is offered *because of the
+kind of answer recorded*, never that a difficulty exists, is likely, or is
+measured. There is no scoring, ranking or weighting by severity, and no
+probability of any kind.
+
+## 4. Verified mapping — what Q-CHAT-10 measures, and what it does not
+
+The instrument asks about: looking when called, ease of eye contact, pointing to
+request, pointing to share interest, pretending, following gaze, wanting to
+comfort an upset person, first words, simple gestures, and staring at nothing.
+
+| Area (report label) | Trigger items (verified constructs) | Suggestion |
 |---|---|---|
-| `observed_response` | a recorded screening answer (`item_code`, `observed_value` required) | `evidence_from_episode` |
-| `model_derived` | produced by a fitted component (e.g. a Shapley contribution) | the explanation adapter |
-| `user_reported` | the person's own follow-up answer or stated preference | the engine |
+| Getting a message across | A3 points to request, A4 points to share interest, A8 first words, A9 simple gestures | `rec_comm_visual_supports` |
+| Getting attention before you speak | A1 response to name, A2 ease of eye contact | `rec_comm_attention_cues` |
+| Extra processing time | A1, A2, A6 follows your gaze | `rec_comm_processing_time` |
+| Noticing and naming feelings | A7 wants to comfort an upset person | `rec_emotion_name_what_you_see` |
 
-The only bridge from screening data to a support question is one-way and runs
-through the person: an atypical observed response can put a domain's follow-up
-question on the *suggested* list (`engine.questions_to_offer`), and only the
-person's answer to that question can establish a need.
+Items **asked but with no curated, reviewed suggestion**: A5 (pretending) and
+A10 (staring at nothing). They are disclosed in the report instead of being
+quietly dropped.
 
-## 4. The honest-status table
+Areas the questionnaire **does not measure**, listed in `unassessed_areas` and
+never offered: sensory comfort, predictability/routines/transitions, daily
+organisation, and preferred information format. Eight previously curated
+strategies address those areas and are therefore structurally unreachable; they
+stay in the library as *reviewed-as data* in
+`NON_TRIGGERABLE_STRATEGIES`, each with an explicit `no_link_reason`, and
+`tests/test_support_engine.py` asserts exhaustively that no answer pattern can
+produce one. Two more (about the child's own moments of distress) are parked for
+the same reason: A7 measures responding to *another* person's distress, not the
+child's own.
 
-Every domain gets exactly one assessment, and its status is one of six values
-with defined consequences:
+## 5. Explanation content (all verified fields)
 
-| status | set when | produces suggestions? |
-|---|---|---|
-| `user_confirmed` | the person answered "yes" to the domain's question | **yes** (basis `user_confirmed`) |
-| `user_stated_preference` | the person named a preference (choice question, answered "yes") | yes, as `general_guidance` — a preference is not a need |
-| `hypothesis_from_observed` | atypical observed response(s), no follow-up answer | **never** |
-| `user_declined` | the person answered "no" | no |
-| `unknown` | `unsure` / `not_applicable` / `prefer_not_to_answer` | no, and nothing is inferred either way |
-| `insufficient_evidence` | no observed linkage and no answer | no |
+`explain_outcome()` is reused unchanged — exact group-Shapley attribution over
+observed items, verified counterfactuals, the v3 prior-sensitivity band
+(reported unavailable for v2 rather than fabricated), limitations and the
+deterministic renderer. The report adds the instrument's own wording for each
+recorded answer (`questionnaire_evidence`), so a reader can see exactly which
+question each contribution refers to. Generation status stays PARTIAL whenever
+something the architecture could not supply is missing (no attribution, no
+uncertainty band — every v2 session — or explanation warnings).
 
-`user_confirmed` requires `assessment_method = user_report` and
-`user_confirmed = True`; a hypothesis can never be marked confirmed. Both are
-Pydantic model validators, so a bug in the rules fails loudly at assembly time
-rather than silently shipping a need the person never stated.
+## 6. Pydantic contracts and what they reject
 
-Domains whose `evidence_item_codes` are empty (sensory, transitions, daily
-living, accessibility) have **no screening-data linkage**: their questions say so
-in their helper text, they can never be suggested from data, and they can only
-ever be user-reported.
+| Model | Role |
+|---|---|
+| `ScreeningResult` | the frozen outcome: decision, `p_hat`, τ, items asked, budget, model identity |
+| `QuestionnaireEvidence` | one recorded answer — id, verified wording, binary response, feature id; ids, wording and feature id are all checked against the instrument |
+| `FeatureContribution` | a computed attribution; direction must match the sign, values must be finite |
+| `ExplanationResult` | the explanation, with evidence, contributions, uncertainty and limitations |
+| `SupportNeedAssessment` | `EVIDENCE_SUGGESTED` / `NO_EVIDENCE` / `NOT_MEASURED`, with trigger ids that must appear in its own evidence |
+| `SupportRecommendation` | a suggestion: title, description, triggering items + responses, basis (`OBSERVED_RESPONSE_PATTERN`), source, review status, applicability, limitations |
+| `ScreeningReport` | the assembled report, with `unassessed_areas` and fail-closed evidence sufficiency |
 
-## 5. Method choices and why
+Rejected: unknown or malformed question ids, non-binary responses, mismatched
+feature ids, invented wording, non-finite numerics, unattributed suggestions,
+suggestions justified by answers not in the report, and unknown fields
+everywhere (`extra="forbid"`).
 
-| Question | Choice | Why this one |
-|---|---|---|
-| How are needs established? | The person's own answer, recorded verbatim | The screening score is a model output on circular labels; it cannot establish a need, and the layer must not pretend it can. |
-| What can screening data do? | Put a follow-up question on the *suggested* list | One-way linkage: data may invite the question, never answer it. |
-| How are suggestions selected? | A deterministic rule table over assessments | No trained component, no demographic input, fully auditable, and testable in isolation. |
-| Where does content come from? | A curated strategy library, all `pending_expert_review` | No external source is asserted without human verification (no URLs are recorded at all); the report discloses the review state. |
-| How is honesty enforced? | Pydantic validators + report-level cross-reference checks | `extra="forbid"` everywhere; every `related_assessment_id` / `evidence_reference` must resolve inside the report. |
+## 7. What this layer does not do
 
-**Rejected:** deriving suggestions from the RL reward, the policy's internal
-state, or any Q-value (they are training signals, not outcomes); an LLM
-verbaliser (deferred — if ever added it must be restricted to verified fields
-with a field-grounding test); any wording that frames a suggestion as
-responding to a difficulty rather than to a request.
+* It does not diagnose, and no wording presents it as a diagnosis.
+* It does not establish a need, a difficulty, a severity or a probability.
+* It does not invent uncertainty or prioritisation, and it does not claim any
+  suggestion is clinically validated: the whole library ships
+  `pending_expert_review` and the report says so.
+* It does not use an LLM anywhere in the decision path. If a verbaliser is ever
+  added it must be restricted to verified fields, with a field-grounding test.
+* It does not ask anything. There is no second form, no optional questions, and
+  no endpoint to submit answers to.
 
-## 6. What the layer does not do
-
-* It does not diagnose, and no wording anywhere presents it as a diagnosis.
-* It does not turn the screening probability into a need, a severity, or a
-  prediction about support effectiveness.
-* It does not claim any suggestion is clinically validated: the entire library
-  ships `pending_expert_review` and the report says so.
-* It does not invent uncertainty, prioritisation, or cost information. There is
-  no ranking by severity and no "best" suggestion.
-* `RecommendationBasis.HYPOTHESIS_OPTED_IN` exists in the schema but is never
-  emitted by the engine, by construction: opting in to a hypothesis *is*
-  answering "yes" to its question, which is the stronger classification
-  `USER_CONFIRMED`.
-
-## 7. Files
+## 8. Files
 
 | File | Role |
 |---|---|
-| `src/support/schemas.py` | Pydantic contracts (`support-report/1.0`), enums, `to_json_safe` |
-| `src/support/domains.py` | domain registry and its (honest) evidence linkage |
-| `src/support/questions.py` | the optional follow-up questionnaire |
-| `src/support/strategies.py` | curated strategy library + guidance provenance |
-| `src/support/engine.py` | assessments, recommendations, answer validation, question split |
-| `src/support/report.py` | assembly from episode + explanation + answers; adapters |
-| `scripts/demo_app.py` | `POST /api/session/support`, `followup` payload on the result |
-| `scripts/demo_static/index.html` | optional support screen (renders backend fields only) |
-| `scripts/demo_live.py` | STEP 6c terminal walkthrough |
-| `tests/test_support_schemas.py`, `test_support_registry.py`, `test_support_questions.py`, `test_support_strategies.py`, `test_support_engine.py`, `test_support_report.py`, `test_support_demo.py` | validation (all synthetic fixtures) |
+| `src/support/questionnaire.py` | the instrument, derived from the verified contract |
+| `src/support/schemas.py` | Pydantic contracts (`support-report/2.0`) |
+| `src/support/domains.py` | trigger mapping, unmeasured areas, asked-without-suggestion items |
+| `src/support/questions.py` | **deleted** (the second questionnaire) |
+| `src/support/strategies.py` | triggerable + non-triggerable libraries, provenance, review status |
+| `src/support/engine.py` | assessments, suggestions, deterministic rules, bounded ids |
+| `src/support/report.py` | assembly from the episode + explanation alone |
+| `scripts/demo_app.py`, `demo_static/index.html`, `demo_live.py` | auto-generated report on the result screen / STEP 6c; no support form or endpoint |
+| tests | `test_support_questionnaire`, `_schemas`, `_registry`, `_questions` (**deleted**), `_strategies`, `_engine`, `_report`, `_demo` |
 
-## 8. Open items for the next phase
+## 9. Open items
 
-* The strategy library is project-curated and unreviewed; a human expert review
-  pass is required before any use beyond research demonstration, and the report
-  discloses that gate as `review_status`.
-* The follow-up questionnaire is offered but never persisted: there is no
-  storage, retention or consent story yet, and none should be added without a
-  data-protection review. For the same reason this phase deliberately produces
-  **no batch results artifact** — a `results/*.json` of assembled reports would
-  be a store of people's own answers. The per-session report is the artifact,
-  and the tests exercise it on synthetic fixtures only.
-* Subgroup fairness of the *suggested* question split has not been measured (the
-  linkage is item-level and deterministic, so the exposure is the screening
-  trajectory itself).
-* The browser demo's support screen is functional but minimal; it has no
-  accessibility audit beyond the patterns the rest of the demo already uses.
+* The strategy library is unreviewed; a human expert-review pass is required
+  before any use beyond research demonstration, and the report discloses that
+  gate as `review_status`.
+* The follow-up answers that used to be collected no longer exist; nothing
+  about a person is stored by this layer, and no batch artifact of reports is
+  written for that reason.
+* Coverage is deliberately narrow: four areas out of ten items. Widening it
+  needs either new instrument items (a research-protocol change, not a code
+  change) or human review of the parked content.
+* The demo's support panel is functional but minimal; it has no accessibility
+  audit beyond the patterns the rest of the demo already uses.

@@ -1,18 +1,24 @@
-"""Wording and provenance guardrails for the strategy library — P4.
+"""Wording and provenance guardrails for the strategy library — P4 (revised).
 
 The curated strategies ship as *unreviewed* data: nothing may claim approval a
 human has not given, nothing may assert an external source that was not
 verified, and the wording must stay optional, non-prescriptive and
 non-deficit. A strategy that fails these tests cannot be offered.
+
+The wording rule added with the revision: applicability conditions reference
+the *observed response pattern* (the questionnaire never asks about a
+preference, and there is no second form to answer).
 """
 from __future__ import annotations
 
 import re
 
-from src.support.domains import DOMAINS_BY_ID
+from src.support.domains import DOMAINS
+from src.support.questionnaire import ITEM_BY_CODE
 from src.support.strategies import (DEPLOYMENT_REQUIRED_STATUS, GUIDANCE_SOURCES,
-                                    REVIEW_APPROVED, REVIEW_PENDING,
-                                    STRATEGIES, STRATEGIES_BY_ID)
+                                    NON_TRIGGERABLE_STRATEGIES,
+                                    REVIEW_APPROVED, REVIEW_PENDING, STRATEGIES,
+                                    STRATEGIES_BY_ID)
 
 #: Wording that must never appear in user-facing support content.
 BANNED_WORDS = (
@@ -23,8 +29,7 @@ BANNED_WORDS = (
 
 
 def _banned_hits(text: str) -> list:
-    """Banned deficit words as whole words (so 'fixed place' is fine, 'fix'
-    alone and 'fixes' are not)."""
+    """Banned deficit words as whole words."""
     hits = []
     lowered = text.lower()
     for banned in BANNED_WORDS:
@@ -35,55 +40,65 @@ def _banned_hits(text: str) -> list:
     return hits
 
 
-def test_strategy_ids_unique():
-    ids = [s.recommendation_id for s in STRATEGIES]
+def _all_strategies():
+    return list(STRATEGIES) + list(NON_TRIGGERABLE_STRATEGIES)
+
+
+def test_strategy_ids_unique_across_both_books():
+    ids = [s.recommendation_id for s in _all_strategies()]
     assert len(ids) == len(set(ids))
 
 
 def test_strategy_wording_guardrails():
-    for s in STRATEGIES:
-        text = " ".join([s.title, s.description, s.intended_purpose,
-                         s.source_attribution]).lower()
+    for s in _all_strategies():
+        text = " ".join([s.title, s.description, s.intended_purpose]).lower()
         hits = _banned_hits(text)
         assert not hits, f"{s.recommendation_id}: {hits}"
 
 
-def test_strategies_carry_applicability_and_limitations():
-    for s in STRATEGIES:
-        assert s.applicability_conditions, (
-            f"{s.recommendation_id} must state when it applies")
+def test_strategies_carry_provenance_review_and_limits():
+    for s in _all_strategies():
         assert s.limitations, f"{s.recommendation_id} must state its limits"
-        assert s.evidence_references, f"{s.recommendation_id} needs provenance"
-        assert "pending" in s.source_attribution.lower(), (
-            f"{s.recommendation_id} must disclose its unreviewed status")
-
-
-def test_strategy_domains_and_guidance_resolve():
-    for s in STRATEGIES:
-        assert s.domain in DOMAINS_BY_ID, f"{s.recommendation_id} -> unknown domain"
-        for ref in s.evidence_references:
-            assert ref in GUIDANCE_SOURCES, (
-                f"{s.recommendation_id} references unknown guidance {ref!r}")
-
-
-def test_every_domain_recommendation_exists_as_a_strategy():
-    for d in DOMAINS_BY_ID.values():
-        for rid in d.recommendation_ids:
-            assert STRATEGIES_BY_ID[rid].domain == d.domain_id, (
-                f"{rid} is declared by domain {d.domain_id} but belongs to "
-                f"{STRATEGIES_BY_ID[rid].domain}")
-
-
-def test_nothing_ships_as_approved_without_human_review():
-    for s in STRATEGIES:
+        assert s.recommendation_source in GUIDANCE_SOURCES
         assert s.review_status == REVIEW_PENDING, (
             f"{s.recommendation_id} must not claim approval; a human sets it")
         assert not s.is_approved
+
+
+def test_triggerable_strategies_state_when_they_apply():
+    for s in STRATEGIES:
+        assert s.trigger_item_codes, (
+            f"{s.recommendation_id} is in the triggerable book but has no "
+            f"linked items")
+        assert s.applicability_conditions
+        for code in s.trigger_item_codes:
+            assert code in ITEM_BY_CODE
+        # applicability must describe the observed pattern, not a questionnaire
+        # that no longer exists
+        blob = " ".join(s.applicability_conditions).lower()
+        for phrase in ("you asked for", "you said", "you told us"):
+            assert phrase not in blob, (s.recommendation_id, phrase)
+
+
+def test_non_triggerable_strategies_explain_why_they_are_unreachable():
+    for s in NON_TRIGGERABLE_STRATEGIES:
+        assert s.no_link_reason
+        assert s.recommendation_id not in STRATEGIES_BY_ID
+        # and their area is not one the engine can offer anything in
+        assert s.domain not in {d.domain_id for d in DOMAINS}, (
+            f"{s.recommendation_id} is parked but {s.domain!r} is still a "
+            f"triggerable area")
+        # the reason must say what the questionnaire actually measures
+        blob = s.no_link_reason.lower()
+        assert "does not ask" in blob or "not ask" in blob
+
+
+def test_nothing_ships_as_approved_without_human_review():
     for g in GUIDANCE_SOURCES.values():
         assert g.review_status == REVIEW_PENDING
-    # the deployment gate is the approved state, and nothing currently meets it
     assert DEPLOYMENT_REQUIRED_STATUS == REVIEW_APPROVED
-    assert not any(s.review_status == REVIEW_APPROVED for s in STRATEGIES)
+    assert not any(s.review_status == REVIEW_APPROVED
+                   for s in _all_strategies())
 
 
 def test_no_fabricated_external_urls():
@@ -92,3 +107,11 @@ def test_no_fabricated_external_urls():
         assert "http://" not in blob and "https://" not in blob and "www." not in blob, (
             f"guidance {g.guidance_id} must not assert an external URL that has "
             f"not been verified by a human")
+
+
+def test_every_domain_recommendation_exists_as_a_strategy():
+    for d in DOMAINS:
+        for rid in d.recommendation_ids:
+            assert STRATEGIES_BY_ID[rid].domain == d.domain_id, (
+                f"{rid} is declared by domain {d.domain_id} but belongs to "
+                f"{STRATEGIES_BY_ID[rid].domain}")

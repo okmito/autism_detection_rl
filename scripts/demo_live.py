@@ -185,45 +185,45 @@ def main() -> int:
     print(render_text(explanation))
 
     # ------------------------------------------------------------- STEP 6c
-    hr("STEP 6c - OPTIONAL SUPPORT IDEAS (asked after the result, always skippable)")
-    print("the screening result never produces a suggestion on its own. The only")
-    print("route to one is what the person says in this follow-up questionnaire:\n")
-    from src.support.engine import questions_to_offer
-    from src.support.report import build_support_report, evidence_from_episode
+    hr("STEP 6c - OPTIONAL SUPPORT IDEAS (generated from the answers already given)")
+    print("nothing extra is asked. The support report is built from this episode's")
+    print("own recorded answers and the same frozen predictor that scored them:\n")
+    from src.support.report import build_support_report
 
-    suggested, optional = questions_to_offer(evidence_from_episode(ep))
-    print(f"  suggested by your answers ({len(suggested)}):")
-    for q in suggested:
-        print(f"    - {q.text}")
-    print(f"  offered anyway, entirely optional ({len(optional)}):")
-    for q in optional:
-        print(f"    - {q.text}")
-    print()
-    # Demonstration answers: one endorsement, one preference, one explicit "no",
-    # one abstention. Nothing here is derived from the screening result.
-    answers = [
-        {"question_id": suggested[0].question_id if suggested else "q_comm_support",
-         "value": "yes"},
-        {"question_id": "q_comm_preference", "value": "yes", "choice": "written"},
-        {"question_id": "q_emotion_support", "value": "no"},
-        {"question_id": "q_sensory_support", "value": "unsure"},
-    ]
     report = build_support_report(
-        episode_result=ep, explanation=explanation,
-        followup_answers=answers, result_id="demo-terminal",
+        episode_result=ep, explanation=explanation, result_id="demo-terminal",
         model_name="MaskedPredictor",
         model_version=str(getattr(predictor, "VERSION", "v2")),
         input_reference="terminal-demo")
+
+    print("  what you answered:")
+    for e in report.questionnaire_evidence:
+        short = e.question_text[:58]
+        print(f"    {e.question_id}  {e.response}  ({short}"
+              f"{'...' if len(e.question_text) > 58 else ''})")
+    print("\n  what each area is known to be, from those answers alone:")
     for a in report.support_assessments:
-        print(f"  {a.domain:<28} {a.status.value}")
+        triggers = (" <- " + ", ".join(a.triggering_question_ids)
+                    if a.triggering_question_ids else "")
+        print(f"    {a.domain:<28} {a.status.value}{triggers}")
     print()
-    for r in report.recommendations:
-        print(f"  * {r.title} ({r.domain})")
-        print(f"      {r.why_selected}")
-        print(f"      source: {r.source_attribution}")
-    if not report.recommendations:
-        print("  nothing offered - no follow-up answer asked for it")
+    if report.recommendations:
+        for r in report.recommendations:
+            print(f"  * {r.title} ({r.domain})")
+            print(f"      {r.why_selected}")
+            pairs = ", ".join(f"{c}={v}" for c, v in zip(r.triggering_question_ids,
+                                                        r.triggering_responses))
+            print(f"      triggered by: {pairs}")
+            print(f"      source: {r.source_attribution}")
+    else:
+        print("  nothing offered: no answer in this session was of the kind a")
+        print("  suggestion follows from.")
     print()
+    if report.unassessed_areas:
+        print("  not asked about by this questionnaire:")
+        for area in report.unassessed_areas:
+            print(f"    - {area}")
+        print()
     for lim in report.limitations:
         print(f"  ! {lim}")
     print(f"\n  {report.disclaimer}")

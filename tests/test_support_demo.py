@@ -1,14 +1,14 @@
-"""P4 demo-wiring tests: the browser demo's support path.
+"""P4 demo-wiring tests: the report is generated from the answers already given.
 
 Covers the two boundaries the support layer adds to the demo:
 
 * **backend** — the finished session retains its episode result and
-  explanation, the follow-up payload splits suggested from optional exactly as
-  the engine does, the report is assembled read-only and JSON-safe, and
-  invalid answers surface as a readable error instead of a half-built report;
-* **frontend** — the support screen renders only backend fields (no suggestion
-  text, status or reason is composed client-side), keeps the skip path, and
-  never makes a claim the screening result did not make.
+  explanation, the support report is assembled from them alone (no answers
+  parameter, no second questionnaire), the screening values are unchanged, and
+  the support endpoint is gone;
+* **frontend** — the report panel renders only backend fields, no support
+  questionnaire exists anywhere in the page, and the skip/dismiss control is
+  local.
 
 The demo backend is loaded the same way the existing audit tests load it, and
 the predictor is a small synthetic one so no participant data is involved.
@@ -24,12 +24,16 @@ import pytest
 from sklearn.model_selection import StratifiedKFold
 
 from src.models.masked_predictor import MaskedPredictor
+from src.support.questionnaire import ITEM_BY_CODE, ITEM_CODES
 
 N_ITEMS = 10
 BUDGET = 6
 TAU = 0.5
 REPO = Path(__file__).resolve().parent.parent
 HTML = REPO / "scripts" / "demo_static" / "index.html"
+
+ATYPICAL = [1] * 10
+TYPICAL = [0] * 10
 
 
 # ----------------------------------------------------------------- fixtures
@@ -91,58 +95,69 @@ def _session(trained_platt, responses, mode="auto", policy="greedy"):
     return demo, sid, r["result"]
 
 
-ATYPICAL = (1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
-
-
 # ------------------------------------------------------------------ backend
-def test_finished_session_retains_result_and_explanation(trained_platt):
+def test_result_carries_the_generated_report(trained_platt):
     demo, sid, res = _session(trained_platt, ATYPICAL)
-    s = demo.S["sessions"][sid]
-    assert s.finished and s.episode_result is not None
-    assert s.explanation is not None
-    assert res["explanation"] is s.explanation
-    assert "followup" in res
+    assert "support_report" in res
+    report = res["support_report"]
+    assert report["schema_version"] == "support-report/2.0"
+    assert report["recommendations"] or report["support_assessments"]
+    json.dumps(report)
 
 
-def test_result_carries_the_followup_questionnaire(trained_platt):
+def test_report_is_built_from_the_session_alone(trained_platt):
+    demo, sid, res = _session(trained_platt, ATYPICAL)
+    session = demo.S["sessions"][sid]
+    assert session.finished and session.episode_result is not None
+    # no answers are used or stored anywhere
+    assert not hasattr(session, "followup_payload")
+    assert not hasattr(session, "support")
+    import inspect
+    assert "answers" not in inspect.signature(session.support_report).parameters
+
+
+def test_screening_values_are_unchanged_by_the_report(trained_platt):
+    """The support layer is a consumer: the same session with and without it
+    must produce the same outcome."""
+    demo, sid, res = _session(trained_platt, ATYPICAL)
+    report = res["support_report"]
+    assert report["screening_result"]["p_hat"] == res["p_hat"]
+    assert report["screening_result"]["items_asked"] == res["items_asked"]
+    assert report["screening_result"]["stop_reason"] == res["stop_reason"]
+    assert report["explanation"] is not None
+
+
+def test_report_evidence_uses_the_verified_instrument(trained_platt):
     _demo, _sid, res = _session(trained_platt, ATYPICAL)
-    fu = res["followup"]
-    assert set(fu) >= {"note", "answer_values", "suggested", "optional"}
-    assert "prefer_not_to_answer" in fu["answer_values"]
-    # the atypical responses legitimately invite the two linked questions
-    assert {q["question_id"] for q in fu["suggested"]} == {"q_comm_support",
-                                                          "q_emotion_support"}
-    # preference questions are never suggested by screening data
-    assert all(not q["is_preference"] for q in fu["suggested"])
-    optional = {q["question_id"] for q in fu["optional"]}
-    assert {"q_sensory_support", "q_transitions_support",
-            "q_comm_preference"} <= optional
+    report = res["support_report"]
+    for e in report["questionnaire_evidence"]:
+        assert e["question_id"] in ITEM_CODES
+        item = ITEM_BY_CODE[e["question_id"]]
+        assert e["feature_id"] == item.feature_id
+        assert e["question_text"] == item.question_text
+        assert e["response"] in (0, 1)
 
 
-def test_support_report_is_assembled_read_only(trained_platt):
-    demo, sid, res = _session(trained_platt, ATYPICAL)
-    p_before = res["p_hat"]
-    out = demo.api_support({"session_id": sid,
-                            "answers": [{"question_id": "q_comm_support",
-                                         "value": "yes"}]})
-    rep = out["report"]
-    assert rep["screening_result"]["p_hat"] == p_before
-    assert rep["schema_version"] == "support-report/1.0"
-    assert rep["explanation"] is not None          # the session's own explanation
-    assert {r["domain"] for r in rep["recommendations"]} == \
-        {"social_communication"}
-    json.dumps(rep)                                # JSON-safe for the frontend
-
-
-def test_skipping_the_questionnaire_is_a_valid_outcome(trained_platt):
+def test_no_support_questionnaire_endpoint_remains(trained_platt):
     demo, sid, _res = _session(trained_platt, ATYPICAL)
-    rep = demo.api_support({"session_id": sid})["report"]
-    assert rep["recommendations"] == []
-    assert any(a["status"] == "hypothesis_from_observed"
-               for a in rep["support_assessments"])
+    assert not hasattr(demo, "api_support")
+    assert not hasattr(demo, "_question_payload")
 
 
-def test_unfinished_session_is_refused(trained_platt):
+def test_typical_answers_produce_no_suggestions(trained_platt):
+    _demo, _sid, res = _session(trained_platt, TYPICAL)
+    report = res["support_report"]
+    assert report["recommendations"] == []
+    assert report["unassessed_areas"]
+
+
+def test_auto_and_interactive_both_carry_the_report(trained_platt):
+    _demo, _sid, auto_res = _session(trained_platt, ATYPICAL, mode="auto")
+    _demo2, _sid2, int_res = _session(trained_platt, ATYPICAL, mode="interactive")
+    assert "support_report" in auto_res and "support_report" in int_res
+
+
+def test_unfinished_session_cannot_be_reported(trained_platt):
     demo = _load_demo_app()
     pred, train = trained_platt
     demo.S.update({"predictor": pred, "train": train,
@@ -150,24 +165,10 @@ def test_unfinished_session_is_refused(trained_platt):
                    "counter": 0, "sessions": {}})
     r = demo.api_start({"mode": "interactive", "policy": "greedy"})
     with pytest.raises(ValueError, match="finish the screening session"):
-        demo.api_support({"session_id": r["session_id"], "answers": []})
+        demo.api_support({"session_id": r["session_id"], "answers": []}) \
+            if hasattr(demo, "api_support") else \
+            demo.S["sessions"][r["session_id"]].support_report()
     demo.S["sessions"].clear()
-
-
-def test_invalid_answers_raise_a_readable_error(trained_platt):
-    demo, sid, _res = _session(trained_platt, ATYPICAL)
-    with pytest.raises(ValueError, match="invalid follow-up answers"):
-        demo.api_support({"session_id": sid,
-                          "answers": [{"question_id": "q_comm_preference",
-                                       "value": "yes"}]})
-    with pytest.raises(ValueError, match="must be a list"):
-        demo.api_support({"session_id": sid, "answers": "yes"})
-
-
-def test_unknown_session_is_refused(trained_platt):
-    demo, _sid, _res = _session(trained_platt, ATYPICAL)
-    with pytest.raises(ValueError, match="unknown session"):
-        demo.api_support({"session_id": "nope", "answers": []})
 
 
 # ----------------------------------------------------------------- frontend
@@ -175,58 +176,55 @@ def _html() -> str:
     return HTML.read_text(encoding="utf-8")
 
 
-def test_support_screen_exists_and_is_optional():
+def test_no_support_questionnaire_anywhere_in_the_page():
     html = _html()
-    assert 'id="supportScreen"' in html
-    assert 'id="supportBtn"' in html
-    assert "Optional support ideas" in html
-    assert "Skip" in html
+    for token in ("supportScreen", "supportForm", "supportSubmit",
+                  "supportBtn", "collectSupportAnswers", "renderSupportForm",
+                  "/api/session/support", "followup"):
+        assert token not in html, f"the second questionnaire left {token} behind"
 
 
-def test_frontend_renders_no_invented_support_copy():
+def test_support_panel_renders_the_report_it_was_given():
+    html = _html()
+    assert 'id="resSupportBox"' in html
+    assert 'id="resSupportBody"' in html
+    assert "renderSupportReport(res.support_report);" in html
+    assert "state.followup" not in html
+
+
+def test_frontend_composes_no_suggestion_copy():
     """Every suggestion, status and reason must come from the backend."""
     html = _html()
-    for backend_only in ("renderSupportReport", "SUPPORT_STATUS_PRESENTATION",
-                         "collectSupportAnswers"):
-        assert backend_only in html
-    # the only presentation table maps backend enum values to labels
-    block = html[html.find("const SUPPORT_STATUS_PRESENTATION"):
-                 html.find("const BASIS_PRESENTATION")]
-    for status in ("user_confirmed", "user_stated_preference",
-                   "hypothesis_from_observed", "user_declined", "unknown",
-                   "insufficient_evidence"):
-        assert status in block
-    # no suggestion text is hard-coded in the client
-    assert "extra processing time" not in html
-    assert "quieter space" not in html
+    assert "SUPPORT_STATUS_PRESENTATION" in html       # enum -> label only
+    for status in ("evidence_suggested", "no_evidence", "not_measured"):
+        assert status in html
+    for strategy_text in ("Pair words with something to see",
+                          "Name what you see", "Get attention before you speak",
+                          "extra processing time"):
+        assert strategy_text not in html
 
 
-def test_frontend_posts_to_the_support_endpoint():
+def test_dismiss_is_local_and_returns_to_the_result():
     html = _html()
-    assert "/api/session/support" in html
-    assert "session_id: state.sessionId, answers: answers" in html
+    assert "$('resSupportBox').removeAttribute('open');" in html
+    block = html[html.find("$('supportSkipBtn')"):]
+    block = block[:block.find("});")]
+    assert "api(" not in block, "dismissing must not call the backend"
+    assert "Suggestions skipped" in block
 
 
-def test_frontend_never_implies_the_screening_result_found_a_need():
+def test_panel_never_claims_a_diagnosis_or_a_need():
     html = _html()
-    support = html[html.find('id="supportScreen"'):]
-    support = support[:support.find("</section>")]
+    block = html[html.find('id="resSupportBox"'):]
+    block = block[:block.find("</section>")]
     for banned in ("diagnos", "deficit", "disorder", "impair", "treatment",
-                   "cure", "suffers"):
-        assert banned not in support.lower(), banned
-    assert "not a diagnosis" in html.lower()
+                   "cure", "suffers", "probability of autism"):
+        assert banned not in block.lower(), banned
 
 
-def test_unanswered_question_is_skipped_not_answered():
-    html = _html()
-    block = html[html.find("function collectSupportAnswers"):
-                 html.find("function submitSupport")]
-    assert "if (!pressed) return;" in block
-
-
-def test_support_state_is_reset_with_the_session():
+def test_support_state_resets_with_the_session():
     html = _html()
     body = html[html.find("function resetAll"):
                 html.find("function resetAll") + 1600]
-    assert "state.followup = null" in body
-    assert "$('supportScreen').hidden = true" in body
+    assert "$('resSupportBody').innerHTML = ''" in body
+    assert "$('resSupportBox').removeAttribute('open');" in body

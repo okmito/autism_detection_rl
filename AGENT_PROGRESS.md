@@ -1,10 +1,82 @@
 # Current Project State
 
-**Last updated:** 2026-10-09 (P4: the optional support layer after the result)
-**Operator request:** "continue" — finish the P4 support layer begun in the
-previous session (`src/support/` data modules + two test files existed, the
-assembly module and every engine/report test did not).
-**Branch state:** see git log (`feat/outcome-explainability`). **527 passed, 12 failed (all environmental), 78 skipped.**
+**Last updated:** 2026-10-09 (P4 revision: the support report is generated from
+the screening answers already given — the second questionnaire is removed)
+**Operator request:** "make sure everything works" → the P4 revision task: no
+second form, explanations and suggestions derived from the existing responses,
+validated against the verified questionnaire contract.
+**Branch state:** see git log (`feat/outcome-explainability`). **558 passed, 12 failed (all environmental), 78 skipped.**
+
+## 2026-10-09 (eleventh pass) — P4 revision: no second questionnaire, and the demo's questions were mislabelled
+
+**The finding that came first.** Before any mapping could be trusted, the
+questionnaire itself had to be pinned down. `scripts/demo_app.py` carried a
+hand-written list of item wording that had drifted from the verified feature
+contract (`src/data/qchat10_contract.py`, signed off in
+`docs/QCHAT10_PROJECTION_APPROVAL.md`): **from A3 onward the demo showed one
+construct while the answer was recorded as the feature for a different one** —
+the demo's "does your child point to ask for something" was written next to
+feature A4, which the contract defines as *points to share interest*, and the
+instrument's tenth item (staring at nothing) was never shown at all. No test
+compared the demo's wording to the contract, so eight mislabelled questions and
+a support linkage written against them both survived review.
+
+**What was built (all post-hoc; the screening path is untouched):**
+
+| module | what it adds |
+|---|---|
+| `src/support/questionnaire.py` | the instrument **derived from the contract** — construct, feature id, Polish variable and scoring direction are read, never restated; the demo's `ITEMS` now come from here |
+| `src/support/schemas.py` | `QuestionnaireEvidence` (id/wording/feature id validated against the instrument), `triggering_question_ids` + `triggering_responses` on both assessments and suggestions, `unassessed_areas` on the report, `OBSERVED_RESPONSE_PATTERN` as the only basis; `support-report/2.0` |
+| `src/support/domains.py` | trigger mapping on the **verified** constructs, `UNASSESSED_AREAS`, `ASKED_WITHOUT_SUGGESTION` (A5, A10), registry-vs-instrument validation at import |
+| `src/support/strategies.py` | triggerable book (4 strategies, each with its own item codes) + `NON_TRIGGERABLE_STRATEGIES` (8 parked, each with a `no_link_reason`); one new pending-review strategy `rec_emotion_name_what_you_see` for A7 |
+| `src/support/engine.py` | evidence-only rules; per-strategy triggering; bounded ids |
+| `src/support/report.py` | `build_support_report(episode_result, explanation)` — **no answers parameter**; fail-closed evidence sufficiency |
+| `scripts/demo_app.py` / `index.html` / `demo_live.py` | the report arrives inside the result payload; the support questionnaire screen, its JS, its state and `POST /api/session/support` are **deleted**; STEP 6c prints the generated report |
+
+**The second questionnaire is gone.** `src/support/questions.py` and
+`tests/test_support_questions.py` are deleted; `FollowUpAnswer`,
+`FollowUpAnswers`, `AnswerValue`, the `USER_*` assessment statuses and the
+`USER_CONFIRMED/HYPOTHESIS_OPTED_IN/GENERAL_GUIDANCE` bases are removed from
+the contracts; the demo's support endpoint returns 404. Nothing is asked twice
+and no answer is stored by the layer.
+
+**The safety property, restated and enforced in three places:** a suggestion may
+only be offered because of an answer that was actually given, and it must name
+the items and the responses that triggered it — `SupportRecommendation`'s
+validators, `ScreeningReport`'s fail-closed check, and the engine's per-strategy
+rule table. Coverage is deliberately narrow: four areas (getting a message
+across, getting attention, extra processing time, noticing and naming feelings)
+mapped to A1–A4, A6–A9. Sensory comfort, routines/transitions, daily
+organisation and preferred information format are disclosed as unmeasured;
+A5 (pretending) and A10 (staring) are asked but offered nothing, and the report
+says so.
+
+**Two bugs the new tests caught:**
+* the composite recommendation id was over the contract's 64-character bound for
+  `predictability_transitions` × `rec_transitions_visual_schedule` (found last
+  session; the domain table has since been rewritten, and the bounded-id helper
+  plus guard tests remain);
+* report-wide evidence-id uniqueness was wrong: one recorded answer can
+  legitimately trigger two areas (A1 justifies both "getting attention" and
+  "extra processing time"), so uniqueness now lives on the assessment.
+
+**Tests:** the support suite was rewritten for the new design —
+`test_support_questionnaire.py` (9, the anti-drift lock: the demo's wording must
+equal the contract's items), `test_support_schemas.py` (34),
+`test_support_registry.py` (6), `test_support_strategies.py` (7),
+`test_support_engine.py` (25), `test_support_report.py` (22),
+`test_support_demo.py` (14, incl. exhaustive checks that no answer pattern can
+produce a suggestion in an unmeasured area). Suite: **548 → 558 passed**, the
+same 12 environmental failures (verified identical to the parent commit by
+re-running in a clean worktree), 78 skipped.
+
+**Verification performed:** the browser demo driven over HTTP — no support form
+or endpoint in the page, report present in the payload with the screening values
+unchalled, all-atypical interactive session firing three suggestions with their
+triggers; the terminal demo ran the full 8-step pipeline on the real Saudi
+cohort with STEP 6c printing the corrected question wording, the honest status
+table, the unmeasured areas and the "asked but nothing offered" disclosure;
+`compileall` clean over `src/`, `scripts/`, `tests/`.
 
 ## 2026-10-09 (tenth pass) — P4: the support layer is complete, wired and tested
 

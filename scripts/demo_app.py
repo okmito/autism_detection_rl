@@ -60,20 +60,15 @@ CACHE_STEM = (f"demo_model_saudi_seed{SEED}_{DEMO_CALIBRATION}"
 CACHE_PT = REPO / "results" / f"{CACHE_STEM}.pt"
 CACHE_PKL = REPO / "results" / f"{CACHE_STEM}.pkl"
 
-# Short illustrative wording of the 10 Q-CHAT-10 items. In the dataset's binary
-# encoding, 1 = atypical/concerning response, 0 = age-typical response.
-ITEMS = [
-    "Does your child look at you when you call their name?",
-    "Can you easily get eye contact with your child?",
-    "When you speak to your child, do they look at you and pay attention?",
-    "Does your child point to ask for something they want?",
-    "Does your child point to share interest with you?",
-    "Does your child engage in pretend play?",
-    "Does your child follow where you are looking?",
-    "If someone is visibly upset, does your child try to comfort them?",
-    "Were your child's first words typical for their age?",
-    "Does your child use simple gestures typical for their age?",
-]
+# The wording is derived from the verified Q-CHAT-10 feature contract
+# (src/data/qchat10_contract.py) rather than restated here. A hand-written copy
+# previously drifted: from A3 onward the demo showed one construct while the
+# answer was recorded as the feature for a different one. tests/test_support_
+# questionnaire.py asserts this list equals the contract's items.
+from src.support.questionnaire import ITEMS as _QCHAT_ITEMS
+
+ITEMS = [item.question_text for item in _QCHAT_ITEMS]
+assert len(ITEMS) == N_ITEMS, "questionnaire contract must supply exactly 10 items"
 
 _LOCK = threading.Lock()
 S: dict = {"predictor": None, "train": None, "test": None, "records": None,
@@ -463,7 +458,7 @@ class Session:
                 "true_label": int(self.record["label"]), "stop_reason": reason,
                 "selection_summary": self._selection_summary(),
                 "explanation": self.explanation,
-                "followup": self.followup_payload()}
+                "support_report": self.support_report()}
 
     def run_auto(self) -> dict:
         ep = run_episode(self.record, BUDGET, 0, self.policy, predict, 0.0, tau=TAU)
@@ -488,7 +483,7 @@ class Session:
                 "true_label": int(self.record["label"]), "stop_reason": ep["stop_reason"],
                 "selection_summary": self._selection_summary(),
                 "explanation": self.explanation,
-                "followup": self.followup_payload()}
+                "support_report": self.support_report()}
 
     def _replayed_trace(self) -> list[dict]:
         """Re-walk the realised item sequence, diagnosing each decision point.
@@ -518,68 +513,30 @@ class Session:
         return isinstance(self.policy, GreedyIGPolicy)
 
     # ------------------------------------------------------------------
-    # P4 — optional follow-up questionnaire and the support report
+    # P4 — the support report is generated from the answers already given
     # ------------------------------------------------------------------
 
-    def followup_payload(self) -> dict:
-        """The optional follow-up questionnaire, in the wording the support
-        layer owns.
+    def support_report(self) -> dict:
+        """Assemble the support report for this finished session.
 
-        Split into ``suggested`` (the only questions the observed responses
-        legitimately invite asking) and ``optional`` (everything else). Both
-        are skippable; the split exists so the UI never implies the screening
-        result found a difficulty.
-        """
-        from src.support.engine import questions_to_offer
-        from src.support.questions import QUESTIONS_BY_ID
-        from src.support.report import evidence_from_episode
-        from src.support.schemas import AnswerValue
-
-        if self.episode_result is None:
-            suggested, optional = [], list(QUESTIONS_BY_ID.values())
-        else:
-            suggested, optional = questions_to_offer(
-                evidence_from_episode(self.episode_result))
-        answer_values = [v.value for v in AnswerValue]
-        return {
-            "note": ("Optional. Everything here is about what you would find "
-                     "useful — the screening result does not decide it, and "
-                     "every question can be skipped."),
-            "answer_values": answer_values,
-            "suggested": [_question_payload(q, answer_values) for q in suggested],
-            "optional": [_question_payload(q, answer_values) for q in optional],
-        }
-
-    def support(self, answers) -> dict:
-        """Assemble the validated support report for this finished session.
-
-        Read-only: the screening result and its explanation are the ones the
-        session already produced. Raises ValueError on invalid answers so the
-        API returns a human-readable 400 instead of a half-built report.
+        Read-only with respect to the screening outcome: the report is built
+        from this session's own episode result and its own explanation. No
+        second questionnaire is asked anywhere — there is nothing to submit.
         """
         from src.support.report import build_support_report
         from src.support.schemas import to_json_safe
 
         if not self.finished or self.episode_result is None:
-            raise ValueError("finish the screening session first — support "
-                             "ideas follow the result, never precede it")
+            raise ValueError("finish the screening session first — the support "
+                             "report follows the result, it never precedes it")
         report = build_support_report(
             episode_result=self.episode_result,
             explanation=self.explanation,
-            followup_answers=answers or [],
             result_id=self.result_id,
             model_name="MaskedPredictor",
             model_version=str(MaskedPredictor.VERSION),
             input_reference="demo-session")
         return to_json_safe(report)
-
-
-def _question_payload(q, answer_values) -> dict:
-    return {"question_id": q.question_id, "domain_id": q.domain_id,
-            "text": q.text, "helper_text": q.helper_text,
-            "choices": list(q.choices) if q.choices else None,
-            "is_preference": q.is_preference_question,
-            "answer_values": answer_values}
 
 
 def api_start(req: dict) -> dict:
@@ -603,24 +560,6 @@ def api_answer(req: dict) -> dict:
     if s is None:
         raise ValueError("unknown session - start a new one")
     return s.answer(value=req.get("value"), stop=bool(req.get("stop")))
-
-
-def api_support(req: dict) -> dict:
-    """P4: assemble the support report for a finished session.
-
-    ``answers`` is the optional follow-up questionnaire; an empty or missing
-    list means it was skipped, which is a valid outcome (the report then says
-    so, domain by domain).
-    """
-    sid = req.get("session_id", "")
-    s = S["sessions"].get(sid)
-    if s is None:
-        raise ValueError("unknown session - start a new one")
-    answers = req.get("answers") or []
-    if not isinstance(answers, list):
-        raise ValueError("answers must be a list of "
-                         "{question_id, value[, choice]} objects")
-    return {"report": s.support(answers)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -651,8 +590,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(api_start(req))
             elif self.path == "/api/session/answer":
                 self._json(api_answer(req))
-            elif self.path == "/api/session/support":
-                self._json(api_support(req))
             else:
                 self._json({"error": "not found"}, 404)
         except Exception as e:

@@ -5,16 +5,25 @@ the support layer. The contracts enforce the invariants the design depends on:
 
 * **Observed vs derived vs user-reported evidence is a type-level distinction**
   (``EvidenceItem.source_type``), never a convention.
-* **A hypothesis is never a confirmed need** (``SupportNeedAssessment`` —
-  status and ``user_confirmed`` are cross-validated).
+* **A suggestion may only come from an answer that was actually given**
+  (``SupportRecommendation.triggering_question_ids`` must resolve to the
+  report's observed evidence, checked at assembly time).
 * **Attribution direction matches the sign of the contribution value**
   (``FeatureContribution``), and all numerics are finite.
-* **Recommendations are traceable** — every ``related_assessment_id`` and
-  ``evidence_reference`` must resolve within the report (validated at assembly
-  time in ``src/support/report.py``).
+* **Question IDs are validated against the instrument itself** — an item code
+  the Q-CHAT-10 contract does not define is rejected, so a typo or an invented
+  question cannot enter a report.
+* **Unmeasured areas are labelled, never inferred** — the report carries
+  ``unassessed_areas`` for the support domains the questionnaire does not ask
+  about, and nothing here can turn them into a need.
 * **No invented semantics** — the only probability is the predictor's own
   calibrated ``p_hat``; there is no "autism probability" field, and no clinical
   cut-off is encoded anywhere in this module.
+
+There is deliberately **no second questionnaire** in this module: every
+recommendation is derived from the screening responses the person already
+gave. The follow-up questionnaire that used to live here was removed in the
+P4 revision — see ``docs/SUPPORT_LAYER_DESIGN.md``.
 
 Nothing in this module knows about the RL environment, the predictor, or the
 demo; it is pure data with validation, so it can be tested in isolation.
@@ -28,7 +37,10 @@ from typing import Any, List, Literal, Optional
 from pydantic import (BaseModel, ConfigDict, Field, field_validator,
                       model_validator)
 
-SCHEMA_VERSION = "support-report/1.0"
+from src.support.questionnaire import (ATYPICAL_VALUE, ITEM_BY_CODE,
+                                       TYPICAL_VALUE)
+
+SCHEMA_VERSION = "support-report/2.0"
 
 #: Instruments this project scores: 10 binary Q-CHAT-10 items (the primary
 #: benchmark) or the 25-item Polish Q-CHAT. Item codes are A1..A{max_items}.
@@ -52,7 +64,10 @@ class DecisionEnum(str, Enum):
 class SourceType(str, Enum):
     OBSERVED_RESPONSE = "observed_response"   # a recorded questionnaire answer
     MODEL_DERIVED = "model_derived"           # produced by a fitted component
-    USER_REPORTED = "user_reported"           # the person's own follow-up answer
+    #: A statement the person made themselves. Retained so the three kinds of
+    #: evidence stay a type-level distinction; nothing in support-report/2.0
+    #: produces it, because the second questionnaire was removed.
+    USER_REPORTED = "user_reported"
 
 
 class AttributionDirection(str, Enum):
@@ -68,41 +83,36 @@ class GenerationStatus(str, Enum):
 
 
 class AssessmentStatus(str, Enum):
-    """Lifecycle of a support-need assessment.
+    """What is known about one support area, from the screening responses alone.
 
-    ``hypothesis_from_observed`` and ``user_confirmed`` are strictly different:
-    a hypothesis is something the observed responses suggest *asking about*;
-    a confirmed need is something the person said they want help with.
-    ``user_stated_preference`` is neither a hypothesis nor a need: it records a
-    stated preference (e.g. preferred information format) that shapes *how*
-    suggestions are offered.
+    * ``EVIDENCE_SUGGESTED`` — at least one of this area's linked items was
+      recorded as atypical. This is *not* a finding of need: it marks an area
+      where an optional idea is offered because that kind of answer sometimes
+      makes it useful. Only the person can say whether it does.
+    * ``NO_EVIDENCE`` — the area's linked items were asked and every answer was
+      typical (or the items were not asked in this session), so nothing is
+      offered.
+    * ``NOT_MEASURED`` — the questionnaire does not ask about this area at all.
+      Nothing can be said, in either direction.
     """
-    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
-    HYPOTHESIS_FROM_OBSERVED = "hypothesis_from_observed"
-    USER_CONFIRMED = "user_confirmed"
-    USER_STATED_PREFERENCE = "user_stated_preference"
-    USER_DECLINED = "user_declined"
-    UNKNOWN = "unknown"
+    EVIDENCE_SUGGESTED = "evidence_suggested"
+    NO_EVIDENCE = "no_evidence"
+    NOT_MEASURED = "not_measured"
 
 
 class AssessmentMethod(str, Enum):
     OBSERVED_ITEM_RULE = "observed_item_rule"   # transparent rule over item codes
-    USER_REPORT = "user_report"                  # the person's own statement
 
 
 class RecommendationBasis(str, Enum):
-    USER_CONFIRMED = "user_confirmed"
-    HYPOTHESIS_OPTED_IN = "hypothesis_opted_in"
-    GENERAL_GUIDANCE = "general_guidance"
+    """Why a suggestion was offered. There is exactly one basis now that the
+    second questionnaire is gone: an observed response pattern.
 
-
-class AnswerValue(str, Enum):
-    """Follow-up answer vocabulary — every item allows abstention."""
-    YES = "yes"
-    NO = "no"
-    UNSURE = "unsure"
-    NOT_APPLICABLE = "not_applicable"
-    PREFER_NOT_TO_ANSWER = "prefer_not_to_answer"
+    ``OBSERVED_RESPONSE_PATTERN`` means the person's own screening answer is the
+    trigger, and the recommendation carries the item codes and the observed
+    values that produced it. It never means a need was established.
+    """
+    OBSERVED_RESPONSE_PATTERN = "observed_response_pattern"
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +158,50 @@ class EvidenceItem(BaseModel):
                 raise ValueError("an observed_response evidence item must "
                                  "record its observed_value")
         return self
+
+
+class QuestionnaireEvidence(BaseModel):
+    """One answer the person actually gave to the screening questionnaire.
+
+    This is the *only* input the support layer may reason about. Every field is
+    validated against the instrument: ``question_id`` must be an item the
+    Q-CHAT-10 contract defines, ``question_text`` must be that item's verified
+    wording, ``feature_id`` must be the contract's feature name for it, and
+    ``response`` must be one of the two binary values the instrument produces.
+    A record that does not match is rejected rather than silently normalised.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str = Field(..., min_length=1, max_length=64)
+    question_text: str = Field(..., min_length=1, max_length=400)
+    response: int
+    feature_id: str = Field(..., min_length=1, max_length=64)
+
+    @model_validator(mode="after")
+    def _agrees_with_the_instrument(self) -> "QuestionnaireEvidence":
+        item = ITEM_BY_CODE.get(self.question_id)
+        if item is None:
+            raise ValueError(
+                f"question_id {self.question_id!r} is not an item of the "
+                f"screening questionnaire (verified items: A1..A10)")
+        if self.feature_id != item.feature_id:
+            raise ValueError(
+                f"feature_id {self.feature_id!r} does not match item "
+                f"{self.question_id} (the contract defines {item.feature_id})")
+        if self.question_text != item.question_text:
+            raise ValueError(
+                f"question_text for {self.question_id} does not match the "
+                f"verified wording of that item")
+        return self
+
+    @field_validator("response")
+    @classmethod
+    def _binary_response(cls, v: int) -> int:
+        if v not in (TYPICAL_VALUE, ATYPICAL_VALUE):
+            raise ValueError(
+                f"response must be the binary value the instrument produces "
+                f"({TYPICAL_VALUE} = typical, {ATYPICAL_VALUE} = atypical), got {v}")
+        return v
 
 
 class FeatureContribution(BaseModel):
@@ -297,41 +351,66 @@ class ScreeningResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SupportNeedAssessment(BaseModel):
-    """A candidate area of support need.
+    """What is known about one support area, from the screening answers alone.
 
-    ``status`` and ``user_confirmed`` are cross-validated: a hypothesis is
-    never presented as a confirmed need, and a declined/unknown answer is never
-    interpreted as a need in either direction.
+    ``status`` and the evidence list agree by construction: an assessment may
+    only be ``EVIDENCE_SUGGESTED`` when it actually carries the atypical
+    observed responses that triggered it, and a suggestion is a *possible*
+    support idea — never a finding that a need exists.
     """
     model_config = ConfigDict(extra="forbid")
 
     assessment_id: str = Field(..., min_length=1, max_length=64)
     domain: str = Field(..., min_length=1, max_length=64)
+    label: str = Field(default="", max_length=120)
     status: AssessmentStatus
     supporting_evidence: List[EvidenceItem] = Field(default_factory=list)
+    #: The questionnaire items whose observed responses triggered this
+    #: assessment. Empty unless the status is EVIDENCE_SUGGESTED.
+    triggering_question_ids: List[str] = Field(default_factory=list)
     assessment_method: AssessmentMethod
-    user_confirmed: bool = False
-    user_preference: Optional[str] = Field(default=None, max_length=300)
-    followup_question_id: Optional[str] = None
     limitations: List[str] = Field(default_factory=list)
 
+    @field_validator("triggering_question_ids")
+    @classmethod
+    def _ids_are_real_items(cls, v: List[str]) -> List[str]:
+        for code in v:
+            if code not in ITEM_BY_CODE:
+                raise ValueError(
+                    f"triggering_question_id {code!r} is not an item of the "
+                    f"screening questionnaire")
+        if len(v) != len(set(v)):
+            raise ValueError("triggering question ids must be unique")
+        return v
+
+    @field_validator("supporting_evidence")
+    @classmethod
+    def _unique_evidence_ids(cls, v: List[EvidenceItem]) -> List[EvidenceItem]:
+        ids = [e.evidence_id for e in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("evidence ids must be unique within an assessment")
+        return v
+
     @model_validator(mode="after")
-    def _status_agrees_with_confirmation(self) -> "SupportNeedAssessment":
-        if self.status is AssessmentStatus.USER_CONFIRMED and not self.user_confirmed:
-            raise ValueError("status 'user_confirmed' requires "
-                             "user_confirmed=True")
-        if self.status is AssessmentStatus.HYPOTHESIS_FROM_OBSERVED and \
-                self.user_confirmed:
-            raise ValueError("a hypothesis must not be marked user_confirmed")
-        if self.status is AssessmentStatus.USER_CONFIRMED and \
-                self.assessment_method is not AssessmentMethod.USER_REPORT:
-            raise ValueError("a confirmed need must come from a user report")
-        if self.status is AssessmentStatus.USER_STATED_PREFERENCE and \
-                self.user_preference is None:
-            raise ValueError("a stated preference must record the preference")
-        if self.status is AssessmentStatus.USER_STATED_PREFERENCE and \
-                self.user_confirmed:
-            raise ValueError("a preference is not a confirmed need")
+    def _status_agrees_with_evidence(self) -> "SupportNeedAssessment":
+        if self.status is AssessmentStatus.EVIDENCE_SUGGESTED:
+            if not self.triggering_question_ids:
+                raise ValueError("an evidence-suggested assessment must name the "
+                                 "questionnaire items that suggested it")
+            if not self.supporting_evidence:
+                raise ValueError("an evidence-suggested assessment must carry the "
+                                 "observed responses that suggested it")
+            observed = {e.item_code for e in self.supporting_evidence}
+            missing = set(self.triggering_question_ids) - observed
+            if missing:
+                raise ValueError(
+                    f"assessment names triggering items {sorted(missing)} that are "
+                    f"not in its own evidence {sorted(observed)}")
+        else:
+            if self.triggering_question_ids:
+                raise ValueError(
+                    f"status {self.status.value!r} carries triggering question "
+                    f"ids but nothing was suggested from a response pattern")
         return self
 
 
@@ -340,8 +419,13 @@ class SupportNeedAssessment(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SupportRecommendation(BaseModel):
-    """An optional support strategy. Never a prescription, never deficit-framed;
-    every suggestion carries its basis and its provenance."""
+    """An optional support suggestion derived from recorded screening answers.
+
+    Never a prescription, never deficit-framed, never personalised by a model:
+    every suggestion carries the item codes and observed values that triggered
+    it, the plain-language reason it was offered, its provenance and its review
+    status. A suggestion with no recorded evidence behind it cannot be built.
+    """
     model_config = ConfigDict(extra="forbid")
 
     recommendation_id: str = Field(..., min_length=1, max_length=64)
@@ -349,13 +433,21 @@ class SupportRecommendation(BaseModel):
     title: str = Field(..., min_length=1, max_length=120)
     description: str = Field(..., min_length=1, max_length=800)
     intended_purpose: str = Field(default="", max_length=300)
+    #: The questionnaire items whose recorded answers justify offering this.
+    triggering_question_ids: List[str] = Field(default_factory=list)
+    #: The observed response for each triggering item, same order as
+    #: ``triggering_question_ids`` (so "A4 = atypical" is explicit, not implied).
+    triggering_responses: List[int] = Field(default_factory=list)
     evidence_references: List[str] = Field(default_factory=list)
     applicability_conditions: List[str] = Field(default_factory=list)
     related_assessment_ids: List[str] = Field(default_factory=list)
     basis: RecommendationBasis
+    #: Where this content comes from (registry key, e.g.
+    #: "guidance:project-curated-v1"). Recorded so no source is invented.
+    recommendation_source: str = Field(default="", max_length=64)
     why_selected: str = Field(default="", max_length=400,
-                              description="plain-language reason, referencing the "
-                                          "triggering assessment/answer")
+                              description="plain-language reason, naming the "
+                                          "triggering items and their answers")
     limitations: List[str] = Field(default_factory=list)
     source_attribution: str = Field(default="", max_length=300)
     review_status: Literal["pending_expert_review", "approved"] = Field(
@@ -363,14 +455,41 @@ class SupportRecommendation(BaseModel):
         description="curated content is pending expert review unless a human "
                     "has approved it; the report discloses the status")
 
+    @field_validator("triggering_question_ids")
+    @classmethod
+    def _ids_are_real_items(cls, v: List[str]) -> List[str]:
+        for code in v:
+            if code not in ITEM_BY_CODE:
+                raise ValueError(
+                    f"triggering_question_id {code!r} is not an item of the "
+                    f"screening questionnaire")
+        return v
+
+    @field_validator("triggering_responses")
+    @classmethod
+    def _responses_are_binary(cls, v: List[int]) -> List[int]:
+        for r in v:
+            if r not in (TYPICAL_VALUE, ATYPICAL_VALUE):
+                raise ValueError(
+                    f"triggering responses must be binary instrument values, "
+                    f"got {r}")
+        return v
+
     @model_validator(mode="after")
-    def _confirmed_bases_need_triggering_assessments(self) -> "SupportRecommendation":
-        if self.basis in (RecommendationBasis.USER_CONFIRMED,
-                          RecommendationBasis.HYPOTHESIS_OPTED_IN) and \
-                not self.related_assessment_ids:
+    def _needs_its_own_evidence(self) -> "SupportRecommendation":
+        if not self.triggering_question_ids:
             raise ValueError(
-                "a need-based recommendation must reference the assessment(s) "
-                "that triggered it")
+                "a suggestion must name the questionnaire items that triggered "
+                "it; there is no basis-free suggestion in this layer")
+        if len(self.triggering_responses) != len(self.triggering_question_ids):
+            raise ValueError("each triggering question id needs its recorded "
+                             "response")
+        if not self.recommendation_source:
+            raise ValueError("a suggestion must record where its content came "
+                             "from")
+        if self.basis is not RecommendationBasis.OBSERVED_RESPONSE_PATTERN:
+            raise ValueError("suggestions only come from observed response "
+                             "patterns")
         return self
 
 
@@ -387,46 +506,6 @@ class RecommendationFeedback(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# follow-up questionnaire
-# ---------------------------------------------------------------------------
-
-class FollowUpAnswer(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    question_id: str = Field(..., min_length=1, max_length=64)
-    value: AnswerValue
-    #: For choice (preference) questions only; validated against the
-    #: question's declared vocabulary by src/support/engine.py.
-    choice: Optional[str] = Field(default=None, max_length=40)
-    optional_comment: Optional[str] = Field(default=None, max_length=300)
-
-
-class FollowUpAnswers(BaseModel):
-    """A completed (possibly partial) follow-up questionnaire.
-
-    Abstentions are first-class values; a missing question is simply absent,
-    and never treated as an answer.
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    answers: List[FollowUpAnswer] = Field(default_factory=list)
-
-    @field_validator("answers")
-    @classmethod
-    def _unique_questions(cls, v: List[FollowUpAnswer]) -> List[FollowUpAnswer]:
-        ids = [a.question_id for a in v]
-        if len(ids) != len(set(ids)):
-            raise ValueError("a question may be answered once")
-        return v
-
-    def answered(self, question_id: str) -> Optional[AnswerValue]:
-        for a in self.answers:
-            if a.question_id == question_id:
-                return a.value
-        return None
-
-
-# ---------------------------------------------------------------------------
 # the assembled report
 # ---------------------------------------------------------------------------
 
@@ -438,8 +517,13 @@ class ScreeningReport(BaseModel):
     report_id: str = Field(..., min_length=1, max_length=64)
     screening_result: ScreeningResult
     explanation: Optional[ExplanationResult] = None
+    #: The answers the person actually gave, in the instrument's own wording.
+    questionnaire_evidence: List[QuestionnaireEvidence] = Field(default_factory=list)
     support_assessments: List[SupportNeedAssessment] = Field(default_factory=list)
     recommendations: List[SupportRecommendation] = Field(default_factory=list)
+    #: Support areas the screening questionnaire does not ask about. Labels
+    #: only — nothing here may be read as a statement about the person.
+    unassessed_areas: List[str] = Field(default_factory=list)
     limitations: List[str] = Field(default_factory=list)
     created_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -458,12 +542,10 @@ class ScreeningReport(BaseModel):
         assessment_ids = {a.assessment_id for a in self.support_assessments}
         if len(assessment_ids) != len(self.support_assessments):
             raise ValueError("assessment ids must be unique within the report")
-        evidence_ids: set[str] = set()
-        for a in self.support_assessments:
-            for e in a.supporting_evidence:
-                if e.evidence_id in evidence_ids:
-                    raise ValueError(f"duplicate evidence_id {e.evidence_id!r}")
-                evidence_ids.add(e.evidence_id)
+        # The same recorded answer may legitimately trigger more than one
+        # support area (A1 is evidence for both "getting attention" and "extra
+        # processing time"), so evidence ids are unique *within* an assessment
+        # — enforced on SupportNeedAssessment — and not across the report.
         for r in self.recommendations:
             for aid in r.related_assessment_ids:
                 if aid not in assessment_ids:
@@ -481,6 +563,23 @@ class ScreeningReport(BaseModel):
                 raise ValueError(
                     f"recommendation {r.recommendation_id!r} has an "
                     f"unresolvable evidence_reference {ref!r}")
+            # Fail closed: a suggestion may only be justified by answers this
+            # report can actually show. A trigger id outside the recorded
+            # evidence is a bug in the rule table, not something to drop.
+            observed = {e.question_id for e in self.questionnaire_evidence}
+            observed |= {e.item_code for e in
+                         (self.explanation.supporting_evidence if self.explanation
+                          else [])}
+            observed |= {e.item_code for e in
+                         (self.explanation.opposing_evidence if self.explanation
+                          else [])}
+            for r in self.recommendations:
+                unknown = set(r.triggering_question_ids) - observed
+                if unknown:
+                    raise ValueError(
+                        f"recommendation {r.recommendation_id!r} is justified by "
+                        f"question id(s) {sorted(unknown)} that are not part of "
+                        f"this report's recorded evidence")
         return self
 
 

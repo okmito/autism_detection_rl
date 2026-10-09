@@ -1,4 +1,4 @@
-"""Assembly of the validated support report — P4 (screening + support).
+"""Assembly of the validated support report — P4 (revised: no second form).
 
 This module is the single place where the three layers meet:
 
@@ -11,33 +11,20 @@ This module is the single place where the three layers meet:
 What this module guarantees
 ---------------------------
 * **Validation at every boundary.** Everything assembled here is a Pydantic
-  model from ``src.support.schemas``: unknown fields are rejected, cross
-  references must resolve inside the report, and a hypothesis can never be
-  presented as a confirmed need. Adapters therefore *convert and verify*, they
-  never invent.
+  model from ``src.support.schemas``: unknown fields are rejected, question ids
+  are validated against the instrument, and every suggestion must be justified
+  by answers this report can actually show. A mismatch raises rather than
+  silently dropping the evidence.
 * **No fabricated fields.** If the explanation object does not carry an
-  uncertainty band (v2 MLP), the assembled report says so — the field is
-  ``available=False`` with the reason preserved, not filled in.
+  uncertainty band (v2 MLP), the report says so — ``available=False`` with the
+  reason preserved, not filled in.
 * **Determinism.** Given the same episode result, the same explanation dict and
-  the same follow-up answers, :func:`build_support_report` returns an identical
+  the same recorded answers, :func:`build_support_report` returns an identical
   report. The only varying field is ``created_at``, supplied by the schema as a
   timestamp for audit purposes.
-* **The follow-up questionnaire is optional and separate.** Its answers never
-  enter the RL state, the predictor input, or the screening outcome; they are
-  consumed here and nowhere else.
-
-Generation status rule (documented so it cannot drift)
-------------------------------------------------------
-``ExplanationResult.generation_status`` is derived, not chosen:
-
-* ``PARTIAL`` — the explanation was produced but something the architecture
-  could not supply is missing: no attributed items, no uncertainty band (every
-  v2 explanation), or the explanation carries warnings (e.g. a decision/τ
-  mismatch).
-* ``COMPLETE`` — attributions, supporting/opposing evidence and an uncertainty
-  band are all present and no warnings were raised.
-* ``UNAVAILABLE`` — never emitted here; a missing explanation is represented by
-  ``ScreeningReport.explanation = None``.
+* **No second questionnaire.** There is no answer parameter. The person's
+  screening responses are the only input; nothing else is asked, and nothing
+  else is inferred.
 """
 from __future__ import annotations
 
@@ -48,9 +35,10 @@ import numpy as np
 from src.env.state import OBSERVED
 from src.explain.limitations import screening_disclaimer
 from src.support import engine
+from src.support.questionnaire import (ITEM_BY_CODE, QuestionnaireItem)
 from src.support.schemas import (
     AssessmentStatus, EvidenceItem, ExplanationResult, FeatureContribution,
-    FollowUpAnswers, GenerationStatus, ScreeningReport, ScreeningResult,
+    GenerationStatus, QuestionnaireEvidence, ScreeningReport, ScreeningResult,
     SourceType, SupportNeedAssessment, SupportRecommendation, UncertaintyInfo)
 from src.support.strategies import REVIEW_PENDING
 
@@ -72,6 +60,14 @@ DEFAULT_MODEL_VERSION = "unknown"
 # screening result
 # ---------------------------------------------------------------------------
 
+def _item_code(j: Any) -> str:
+    """Accept an item index (0-based int, as ``run_episode`` records) or an
+    already-formatted code (``"A3"``)."""
+    if isinstance(j, str):
+        return j
+    return f"A{int(j) + 1}"
+
+
 def _items_asked_codes(episode_result: Dict[str, Any]) -> List[str]:
     """Item codes (``A1``..) for the questions the episode actually asked."""
     items = episode_result.get("items_asked")
@@ -79,14 +75,6 @@ def _items_asked_codes(episode_result: Dict[str, Any]) -> List[str]:
         return [_item_code(j) for j in items]
     return [str(t["item"]) for t in (episode_result.get("trace") or [])
             if "item" in t]
-
-
-def _item_code(j: Any) -> str:
-    """Accept an item index (0-based int, as ``run_episode`` records) or an
-    already-formatted code (``"A3"``, as stored explanations keep them)."""
-    if isinstance(j, str):
-        return j
-    return f"A{int(j) + 1}"
 
 
 def screening_result_from_episode(
@@ -218,6 +206,38 @@ def evidence_from_episode(episode_result: Dict[str, Any]) -> List[EvidenceItem]:
     return out
 
 
+def questionnaire_evidence_from_episode(
+    episode_result: Dict[str, Any]) -> List[QuestionnaireEvidence]:
+    """The same answers as :class:`QuestionnaireEvidence` — the instrument's own
+    verified wording, feature id and binary response.
+
+    Every entry is validated against the questionnaire contract, so a response
+    recorded against an unknown item code fails here instead of reaching the
+    report.
+    """
+    evidence = evidence_from_episode(episode_result)
+    out: List[QuestionnaireEvidence] = []
+    for e in evidence:
+        item = ITEM_BY_CODE.get(e.item_code)
+        if item is None:
+            raise ValueError(
+                f"the episode recorded a response for item {e.item_code!r}, "
+                f"which the verified questionnaire contract does not define")
+        out.append(questionnaire_evidence_for(item, int(e.observed_value)))
+    return out
+
+
+def questionnaire_evidence_for(item: QuestionnaireItem,
+                               response: int) -> QuestionnaireEvidence:
+    """One verified question/answer pair."""
+    return QuestionnaireEvidence(
+        question_id=item.item_code,
+        question_text=item.question_text,
+        response=int(response),
+        feature_id=item.feature_id,
+    )
+
+
 def _observed_evidence_from_explanation(
     explanation: Dict[str, Any]) -> List[EvidenceItem]:
     """Same evidence, recovered from a stored explanation dict.
@@ -284,8 +304,10 @@ def explanation_from_dict(
 
     ``supporting``/``opposing`` evidence is resolved against the explanation's
     own attribution signs; contributions carry the same direction and the
-    Shapley baseline reference. Generation status follows the documented rule
-    in the module docstring.
+    Shapley baseline reference. Generation status follows the documented rule:
+    PARTIAL when something the architecture could not supply is missing (no
+    attributed items, no uncertainty band — every v2 session — or the
+    explanation carries warnings), COMPLETE otherwise.
     """
     if not isinstance(explanation, dict):
         raise TypeError("explanation must be the dict produced by "
@@ -342,28 +364,40 @@ def explanation_from_dict(
 def _report_limitations(
     assessments: Sequence[SupportNeedAssessment],
     recommendations: Sequence[SupportRecommendation],
+    asked_without_suggestion: Sequence[str],
 ) -> List[str]:
     """Limitations of the *support* layer (the screening outcome's own
     limitations stay on the screening result and the explanation)."""
     out: List[str] = []
-    n_hyp = sum(1 for a in assessments
-                if a.status is AssessmentStatus.HYPOTHESIS_FROM_OBSERVED)
-    if n_hyp:
+    if any(a.status is AssessmentStatus.EVIDENCE_SUGGESTED
+           for a in assessments):
         out.append(
-            f"{n_hyp} area(s) are marked as hypotheses suggested by observed "
-            f"responses. A hypothesis is not a finding of need: it only marks "
-            f"a follow-up question that can be skipped, and it produced no "
-            f"suggestions.")
+            "Each suggestion is offered because of recorded answers named on "
+            "it. That is not a finding that a difficulty exists, and no "
+            "suggestion was chosen by a model to fit your child.")
     if any(r.review_status == REVIEW_PENDING for r in recommendations):
         out.append(
-            "Every support suggestion here is curated project content that a "
-            "human expert has not yet reviewed. None has been clinically "
-            "evaluated, and none is offered as an intervention or a "
-            "prescription.")
+            "Every suggestion here is curated project content that a human "
+            "expert has not yet reviewed. None has been clinically evaluated, "
+            "and none is offered as an intervention or a prescription.")
+    if asked_without_suggestion:
+        out.append(
+            "The questionnaire also asked about " +
+            ", ".join(asked_without_suggestion) +
+            " in this session. This project has no curated, expert-reviewed "
+            "suggestion linked to those items, so none is offered and nothing "
+            "is inferred from them.")
     out.append(
-        "Support suggestions are optional and were selected by transparent "
-        "rules from your own follow-up answers and stated preferences. No "
-        "model personalised them to you, and nothing here is a diagnosis.")
+        "Suggestions are optional, were selected by transparent rules from the "
+        "screening answers you gave, and are not personalised to you.")
+    out.append(
+        "This questionnaire does not ask about sensory comfort, routines and "
+        "transitions, daily organisation, or how you prefer information to be "
+        "shared. Nothing is said about those areas here.")
+    out.append(
+        "The questionnaire asks about responding to another person's distress "
+        "(A7 where it came up); it does not ask about the child's own moments "
+        "of distress, so nothing is offered for those.")
     return out
 
 
@@ -371,8 +405,6 @@ def build_support_report(
     *,
     episode_result: Optional[Dict[str, Any]] = None,
     explanation: Optional[Dict[str, Any]] = None,
-    followup_answers: Union[FollowUpAnswers, Sequence[Dict[str, Any]], None]
-    = None,
     result_id: str = "sr-1",
     report_id: Optional[str] = None,
     model_name: str = DEFAULT_MODEL_NAME,
@@ -380,46 +412,35 @@ def build_support_report(
     input_reference: str = "",
     tau: Optional[float] = None,
 ) -> ScreeningReport:
-    """Assemble the validated support report.
+    """Assemble the validated support report from the screening session alone.
 
     Parameters
     ----------
     episode_result:
         ``run_episode`` output (preferred: gives the exact trace positions for
-        the observed-response evidence and the budget the episode ran at).
+        the observed responses and the budget the episode ran at).
     explanation:
         ``explain_outcome`` output (schema ``outcome-explanation/1.0``). One of
         the two must be given; with both, the episode result is authoritative
         for the screening result and the explanation supplies the attribution.
-    followup_answers:
-        The optional follow-up questionnaire: a ``FollowUpAnswers`` model or a
-        list of answer dicts. ``None`` (or an empty list) means the
-        questionnaire was skipped, which is a valid outcome — every domain
-        then reports an honest abstention or hypothesis.
     result_id, report_id:
         Correlation ids; ``report_id`` defaults to ``rep-<result_id>``.
     model_name, model_version, input_reference, tau:
         Provenance of the screening result, recorded verbatim.
 
+    There is deliberately **no answers parameter**: no second questionnaire is
+    asked anywhere in this pipeline.
+
     Raises
     ------
     ValueError
-        If neither an episode result nor an explanation is given, or if the
-        follow-up answers are semantically invalid (checked against the
-        questionnaire definition, not just their types).
+        If neither an episode result nor an explanation is given, if the
+        recorded items are not part of the verified instrument, or if a
+        suggestion could not be justified by the recorded answers.
     """
     if episode_result is None and explanation is None:
         raise ValueError("build_support_report needs an episode_result or an "
                          "explanation; nothing can be assembled without one")
-
-    answers = (FollowUpAnswers(answers=[]) if followup_answers is None
-               else (followup_answers if isinstance(followup_answers,
-                                                    FollowUpAnswers)
-                     else FollowUpAnswers.model_validate(
-                         {"answers": list(followup_answers)})))
-    problems = engine.validate_followup_answers(answers)
-    if problems:
-        raise ValueError("invalid follow-up answers: " + "; ".join(problems))
 
     screening_limitations = [str(x) for x in
                              ((explanation or {}).get("limitations") or [])]
@@ -429,29 +450,38 @@ def build_support_report(
             model_version=model_version, input_reference=input_reference,
             limitations=screening_limitations, tau=tau)
         evidence = evidence_from_episode(episode_result)
+        questionnaire_evidence = questionnaire_evidence_from_episode(episode_result)
     else:
         screening = screening_result_from_explanation(
             explanation, result_id=result_id, model_name=model_name,
             model_version=model_version, input_reference=input_reference,
             limitations=screening_limitations)
         evidence = _observed_evidence_from_explanation(explanation)
+        questionnaire_evidence = [
+            questionnaire_evidence_for(ITEM_BY_CODE[e.item_code],
+                                       int(e.observed_value))
+            for e in evidence if e.item_code in ITEM_BY_CODE]
 
     expl = (explanation_from_dict(explanation, result_id=screening.result_id,
                                   observed_evidence=evidence)
             if explanation is not None else None)
 
-    assessments, recommendations = engine.evaluate(evidence, answers)
+    assessments, recommendations = engine.evaluate(evidence)
 
-    limitations = _report_limitations(assessments, recommendations)
-    disclaimer = (screening_disclaimer() + " Support suggestions are optional "
-                  "and have not been clinically evaluated.")
+    asked_without = engine.asked_without_suggestion_codes(evidence)
+    limitations = _report_limitations(assessments, recommendations,
+                                      asked_without)
+    disclaimer = (screening_disclaimer() + " Suggestions are optional and are "
+                  "based only on the answers you gave.")
 
     return ScreeningReport(
         report_id=report_id or f"rep-{screening.result_id}",
         screening_result=screening,
         explanation=expl,
+        questionnaire_evidence=questionnaire_evidence,
         support_assessments=assessments,
         recommendations=recommendations,
+        unassessed_areas=engine.unassessed_area_labels(),
         limitations=limitations,
         disclaimer=disclaimer,
     )

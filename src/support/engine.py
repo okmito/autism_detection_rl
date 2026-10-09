@@ -1,52 +1,50 @@
-"""The recommendation engine — P4.
+"""The recommendation engine — P4 (revised: no second questionnaire).
 
-Deterministic, auditable rules that connect *supported findings* and *user
-statements* to optional support strategies. There are no trained components in
-this module and no demographic input can reach it: rules read only
-
-* the observed questionnaire responses (via the explanation's evidence), and
-* the person's own follow-up answers.
+Deterministic, auditable rules that connect recorded screening answers to
+optional support suggestions. There are no trained components in this module
+and no demographic input can reach it: rules read only the observed
+questionnaire responses.
 
 The core safety rule, enforced structurally:
 
-    **A hypothesis never fires a recommendation.**
+    A suggestion may only be offered because of an answer that was actually
+    given, and it must name the items and the responses that triggered it.
 
-Only ``user_confirmed`` needs produce need-based recommendations; a stated
-preference produces general-guidance suggestions that keep the triggering
-assessment reference. Abstention (``insufficient_evidence`` / ``unknown``)
-produces an assessment and nothing else.
+What this engine deliberately does **not** do
+---------------------------------------------
+* It does not establish a need. ``EVIDENCE_SUGGESTED`` means "an optional idea
+  is offered because that kind of answer sometimes makes it useful", nothing
+  more. The person decides whether it fits.
+* It does not infer anything the questionnaire never measured. Areas in
+  ``src/support/domains.py::UNASSESSED_AREAS`` (sensory, routines and
+  transitions, daily organisation, information-format preference) are disclosed
+  as unmeasured and can never produce a suggestion.
+* It does not score, rank or weight suggestions by severity, and it produces
+  no probability of any kind.
+* It does not personalise content with the model: the same answers always give
+  the same suggestions.
 
-``RecommendationBasis.HYPOTHESIS_OPTED_IN`` exists in the schema but is never
-emitted here, by construction: opting in to a hypothesis *is* answering "yes"
-to its follow-up question, which is a user report and therefore the stronger
-classification ``USER_CONFIRMED``. Nothing in this module is trained, and no
-demographic field can reach it: rules read only observed responses (via
-evidence items) and the person's own follow-up answers.
+Determinism and bounds: ids are built from the assessment and strategy
+registries and are capped at the contract's 64 characters
+(``src/support/engine.py::_recommendation_id``); a digest fallback keeps them
+unique and bounded if a future registry entry would run long.
 """
 from __future__ import annotations
 
 import hashlib
 from typing import Dict, List, Tuple
 
-from src.support.domains import DOMAINS, DOMAINS_BY_ID, Domain
-from src.support.questions import QUESTIONS_BY_ID, FollowUpQuestion
-from src.support.schemas import (
-    AnswerValue, AssessmentMethod, AssessmentStatus, EvidenceItem,
-    FollowUpAnswer, FollowUpAnswers, RecommendationBasis, SourceType,
-    SupportNeedAssessment, SupportRecommendation)
-from src.support.strategies import STRATEGIES_BY_ID
-
-#: The Q-CHAT-10 binary projection used throughout this project:
-#: ``1`` = atypical/concerning response (see README §15 and the contract).
-ATYPICAL_VALUE = 1
+from src.support.domains import (ASKED_WITHOUT_SUGGESTION, DOMAINS, DOMAINS_BY_ID,
+                                 Domain, UNASSESSED_AREAS, UnassessedArea)
+from src.support.questionnaire import (ATYPICAL_VALUE, ITEM_BY_CODE,
+                                       ITEM_CODES, QuestionnaireItem)
+from src.support.schemas import (AssessmentMethod, AssessmentStatus,
+                                 EvidenceItem, RecommendationBasis, SourceType,
+                                 SupportNeedAssessment, SupportRecommendation)
+from src.support.strategies import STRATEGIES, STRATEGIES_BY_ID, SupportStrategy
 
 #: Ids in this layer are bounded by the contracts in ``src.support.schemas``
-#: (``recommendation_id``: 64 characters). A composite id is the assessment id
-#: plus the strategy's registry id, so a long domain plus a long strategy can
-#: exceed the bound — which used to crash report assembly for a domain the
-#: questionnaire legitimately supports. The helper below keeps ids readable and
-#: inside the bound, and falls back to a stable digest so a future registry
-#: entry cannot reintroduce the crash.
+#: (``recommendation_id``: 64 characters).
 MAX_ID_LENGTH = 64
 
 
@@ -54,8 +52,9 @@ def _recommendation_id(assessment_id: str, strategy_id: str) -> str:
     """Composite recommendation id, bounded and deterministic.
 
     The strategy's ``rec_`` registry prefix is redundant inside the composite
-    (the whole id starts with ``rec-``); dropping it buys the length that the
-    longest domain/strategy pairs need.
+    (the id already starts with ``rec-``); dropping it buys the length the
+    longest domain/strategy pairs need, and a digest fallback keeps the id
+    inside the bound if a future registry entry would run over.
     """
     stem = (strategy_id[len("rec_"):] if strategy_id.startswith("rec_")
             else strategy_id)
@@ -67,342 +66,159 @@ def _recommendation_id(assessment_id: str, strategy_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# which follow-up questions to offer
+# observed evidence
 # ---------------------------------------------------------------------------
 
-def questions_to_offer(evidence: List[EvidenceItem]
-                       ) -> Tuple[List[FollowUpQuestion], List[FollowUpQuestion]]:
-    """Split the questionnaire into *suggested* and *optional* questions.
-
-    A question is **suggested** only when its domain has screening-data linkage
-    *and* at least one observed response in that domain was atypical — the sole
-    permitted direction from screening data to a support question. Everything
-    else (including every preference question and every domain with no
-    linkage) is offered as an **optional** extra, and skipping any question is
-    always valid.
-
-    Returns ``(suggested, optional)``, both in questionnaire order.
-    """
-    suggested: List[FollowUpQuestion] = []
-    optional: List[FollowUpQuestion] = []
-    for q in QUESTIONS_BY_ID.values():
-        domain = DOMAINS_BY_ID[q.domain_id]
-        triggered = (domain.has_data_linkage and not q.is_preference_question
-                     and bool(_observed_atypical_items(domain, evidence)))
-        (suggested if triggered else optional).append(q)
-    return suggested, optional
+def _is_atypical(e: EvidenceItem) -> bool:
+    return (e.source_type is SourceType.OBSERVED_RESPONSE
+            and e.observed_value == ATYPICAL_VALUE)
 
 
-# ---------------------------------------------------------------------------
-# answer validation
-# ---------------------------------------------------------------------------
-
-def validate_followup_answers(answers: FollowUpAnswers) -> List[str]:
-    """Semantic validation of answers against the questionnaire definition.
-
-    Returns a list of human-readable problems (empty when valid). The Pydantic
-    layer guarantees types; this guarantees the answers mean what they claim.
-    """
-    problems: List[str] = []
-    for a in answers.answers:
-        q = QUESTIONS_BY_ID.get(a.question_id)
-        if q is None:
-            problems.append(f"unknown question id {a.question_id!r}")
-            continue
-        if q.is_preference_question:
-            if a.choice is None:
-                problems.append(
-                    f"question {a.question_id!r} is a choice question and "
-                    f"requires a choice value")
-            elif a.choice not in q.choices:
-                problems.append(
-                    f"choice {a.choice!r} is not an option for question "
-                    f"{a.question_id!r} (allowed: {list(q.choices)})")
-            if a.value not in (AnswerValue.YES, AnswerValue.UNSURE,
-                               AnswerValue.NOT_APPLICABLE,
-                               AnswerValue.PREFER_NOT_TO_ANSWER):
-                problems.append(
-                    f"question {a.question_id!r} expects an answer value of "
-                    f"yes/unsure/not_applicable/prefer_not_to_answer alongside "
-                    f"any choice")
-        elif a.choice is not None:
-            problems.append(
-                f"question {a.question_id!r} is not a choice question, so it "
-                f"carries no choice value (got {a.choice!r})")
-    return problems
+def _atypical_for(evidence: List[EvidenceItem],
+                  item_codes: Tuple[str, ...]) -> List[EvidenceItem]:
+    """Observed atypical responses among ``item_codes``, in instrument order."""
+    want = set(item_codes)
+    return [e for e in evidence
+            if _is_atypical(e) and e.item_code in want]
 
 
-def _answer_for(answers: FollowUpAnswers, question_id: str) -> FollowUpAnswer | None:
-    for a in answers.answers:
-        if a.question_id == question_id:
-            return a
-    return None
+def _asked_codes(evidence: List[EvidenceItem]) -> List[str]:
+    """Item codes that were actually asked, in instrument order."""
+    observed = {e.item_code for e in evidence
+                if e.source_type is SourceType.OBSERVED_RESPONSE}
+    return [c for c in ITEM_CODES if c in observed]
 
 
 # ---------------------------------------------------------------------------
 # assessments
 # ---------------------------------------------------------------------------
 
-def _observed_atypical_items(domain: Domain, evidence: List[EvidenceItem]
-                             ) -> List[EvidenceItem]:
-    """Evidence items for this domain's items whose observed response was the
-    atypical/concerning value. Typical responses are not evidence of anything
-    and never suggest a support question."""
-    out = []
-    for e in evidence:
-        if (e.source_type is SourceType.OBSERVED_RESPONSE
-                and e.item_code in domain.evidence_item_codes
-                and e.observed_value == ATYPICAL_VALUE):
-            out.append(e)
-    return out
+def build_assessments(evidence: List[EvidenceItem]
+                      ) -> List[SupportNeedAssessment]:
+    """One assessment per triggerable support area, plus one per unmeasured area.
 
-
-def _primary_question(domain: Domain) -> FollowUpQuestion | None:
-    """The question that can establish a need for this domain (the first
-    non-choice question)."""
-    for qid in domain.followup_question_ids:
-        q = QUESTIONS_BY_ID[qid]
-        if not q.is_preference_question:
-            return q
-    return None
-
-
-def build_assessments(evidence: List[EvidenceItem],
-                      answers: FollowUpAnswers) -> List[SupportNeedAssessment]:
-    """One assessment per domain, with an honest status for every outcome:
-    confirmed / stated preference / declined / unknown / hypothesis / abstain.
+    * a triggerable area with at least one atypical linked answer is
+      ``EVIDENCE_SUGGESTED`` and carries those answers;
+    * a triggerable area whose linked items were all answered in the typical
+      direction is ``NO_EVIDENCE``;
+    * a triggerable area whose items were not asked is ``NO_EVIDENCE`` with a
+      limitation saying so, rather than being treated as an absence of need;
+    * an unmeasured area is ``NOT_MEASURED``, always, with the reason.
     """
     assessments: List[SupportNeedAssessment] = []
+
     for domain in DOMAINS:
-        q = _primary_question(domain)
-        if q is None:
-            continue
-        a = _answer_for(answers, q.question_id)
-        atypical = _observed_atypical_items(domain, evidence)
-        domain_note = domain.neutral_framing_note
-
-        if a is None:
-            # No follow-up answer: the only thing screening data can produce is
-            # an explicitly-labelled hypothesis, or an abstention.
-            if atypical and domain.has_data_linkage:
-                assessments.append(SupportNeedAssessment(
-                    assessment_id=f"as-{domain.domain_id}",
-                    domain=domain.domain_id,
-                    status=AssessmentStatus.HYPOTHESIS_FROM_OBSERVED,
-                    supporting_evidence=list(atypical),
-                    assessment_method=AssessmentMethod.OBSERVED_ITEM_RULE,
-                    user_confirmed=False,
-                    followup_question_id=q.question_id,
-                    limitations=[
-                        "Suggested only by observed responses; no follow-up "
-                        "answer was given, so nothing is established.",
-                        domain_note,
-                    ],
-                ))
-            else:
-                assessments.append(SupportNeedAssessment(
-                    assessment_id=f"as-{domain.domain_id}",
-                    domain=domain.domain_id,
-                    status=AssessmentStatus.INSUFFICIENT_EVIDENCE,
-                    supporting_evidence=[],
-                    assessment_method=AssessmentMethod.OBSERVED_ITEM_RULE,
-                    user_confirmed=False,
-                    followup_question_id=None,
-                    limitations=[
-                        ("The screening questionnaire does not cover this "
-                         "area and no follow-up answer was given; nothing can "
-                         "be said about it." if not domain.has_data_linkage else
-                         "No relevant observed responses and no follow-up "
-                         "answer; nothing can be said about this area."),
-                        domain_note,
-                    ],
-                ))
-            continue
-
-        # A follow-up answer exists: the person's own report decides.
-        user_evidence = [EvidenceItem(
-            evidence_id=f"ev-user-{q.question_id}",
-            source_type=SourceType.USER_REPORTED,
-            item_code=None,
-            observed_value=None,
-            source_reference=f"followup:{q.question_id}",
-            description=(f"answer '{a.value.value}' to the follow-up question "
-                         f"about {domain.label.lower()}"),
-        )]
-
-        if a.value is AnswerValue.YES:
-            assessments.append(SupportNeedAssessment(
-                assessment_id=f"as-{domain.domain_id}",
-                domain=domain.domain_id,
-                status=AssessmentStatus.USER_CONFIRMED,
-                supporting_evidence=list(atypical) + user_evidence,
-                assessment_method=AssessmentMethod.USER_REPORT,
-                user_confirmed=True,
-                followup_question_id=q.question_id,
-                limitations=[
-                    "Established by your own answer, not by the screening "
-                    "result.",
-                    domain_note,
-                ],
-            ))
-        elif a.value is AnswerValue.NO:
-            assessments.append(SupportNeedAssessment(
-                assessment_id=f"as-{domain.domain_id}",
-                domain=domain.domain_id,
-                status=AssessmentStatus.USER_DECLINED,
-                supporting_evidence=user_evidence,
-                assessment_method=AssessmentMethod.USER_REPORT,
-                user_confirmed=False,
-                followup_question_id=q.question_id,
-                limitations=[
-                    "You indicated you do not want support with this right "
-                    "now; nothing is offered.",
-                    domain_note,
-                ],
-            ))
+        atypical = _atypical_for(evidence, domain.trigger_item_codes)
+        asked = _asked_codes(evidence)
+        linked_asked = [c for c in domain.trigger_item_codes if c in asked]
+        if atypical:
+            status = AssessmentStatus.EVIDENCE_SUGGESTED
+            limitations = [
+                "An optional idea is offered because of the recorded answer(s) "
+                "named above. This is not a finding that a difficulty exists.",
+                domain.framing_note,
+            ]
+        elif linked_asked:
+            status = AssessmentStatus.NO_EVIDENCE
+            limitations = [
+                "Answers about this area were all recorded in the typical "
+                "direction, so nothing is offered.",
+                domain.framing_note,
+            ]
         else:
-            abstained = a.value in (AnswerValue.PREFER_NOT_TO_ANSWER,
-                                    AnswerValue.NOT_APPLICABLE,
-                                    AnswerValue.UNSURE)
-            assessments.append(SupportNeedAssessment(
-                assessment_id=f"as-{domain.domain_id}",
-                domain=domain.domain_id,
-                status=AssessmentStatus.UNKNOWN,
-                supporting_evidence=user_evidence,
-                assessment_method=AssessmentMethod.USER_REPORT,
-                user_confirmed=False,
-                followup_question_id=q.question_id,
-                limitations=[
-                    (f"Your answer was '{a.value.value}'; nothing is inferred "
-                     f"in either direction." if abstained else
-                     "Your answer left this open; nothing is inferred."),
-                    domain_note,
-                ],
-            ))
-
-    assessments.extend(_preference_assessments(answers))
-    return assessments
-
-
-def _preference_assessments(answers: FollowUpAnswers
-                            ) -> List[SupportNeedAssessment]:
-    """Stated preferences are recorded as preferences, never as needs.
-
-    A preference counts only when the person answered ``yes`` *and* named a
-    choice. An abstention alongside a choice is recorded as ``unknown`` — the
-    engine does not read a preference into a non-answer — and a domain whose
-    only question is a preference question gets no assessment at all when it
-    was not answered.
-    """
-    out: List[SupportNeedAssessment] = []
-    for q in QUESTIONS_BY_ID.values():
-        if not q.is_preference_question:
-            continue
-        a = _answer_for(answers, q.question_id)
-        if a is None or a.choice is None:
-            continue
-        if a.value is AnswerValue.YES:
-            status = AssessmentStatus.USER_STATED_PREFERENCE
-            limitation = ("A preference about how information is shared; not a "
-                          "support need and not a difficulty.")
-        else:
-            status = AssessmentStatus.UNKNOWN
-            limitation = (f"Your answer was '{a.value.value}'; no preference is "
-                          f"inferred in either direction.")
-        out.append(SupportNeedAssessment(
-            assessment_id=f"as-pref-{q.question_id}",
-            domain=q.domain_id,
+            status = AssessmentStatus.NO_EVIDENCE
+            limitations = [
+                "This area was not reached in this session, so nothing is "
+                "offered and nothing is inferred in either direction.",
+                domain.framing_note,
+            ]
+        assessments.append(SupportNeedAssessment(
+            assessment_id=f"as-{domain.domain_id}",
+            domain=domain.domain_id,
+            label=domain.label,
             status=status,
-            supporting_evidence=[EvidenceItem(
-                evidence_id=f"ev-user-{q.question_id}",
-                source_type=SourceType.USER_REPORTED,
-                item_code=None, observed_value=None,
-                source_reference=f"followup:{q.question_id}",
-                description=f"preference stated: {a.choice}",
-            )],
-            assessment_method=AssessmentMethod.USER_REPORT,
-            user_confirmed=False,
-            user_preference=(a.choice if status is
-                             AssessmentStatus.USER_STATED_PREFERENCE else None),
-            followup_question_id=q.question_id,
-            limitations=[limitation],
+            supporting_evidence=list(atypical),
+            triggering_question_ids=[e.item_code for e in atypical],
+            assessment_method=AssessmentMethod.OBSERVED_ITEM_RULE,
+            limitations=limitations,
         ))
-    return out
+
+    for area in UNASSESSED_AREAS:
+        assessments.append(SupportNeedAssessment(
+            assessment_id=f"as-unassessed-{area.area_id}",
+            domain=area.area_id,
+            label=area.label,
+            status=AssessmentStatus.NOT_MEASURED,
+            supporting_evidence=[],
+            triggering_question_ids=[],
+            assessment_method=AssessmentMethod.OBSERVED_ITEM_RULE,
+            limitations=[f"{area.reason}; nothing can be said about this area "
+                         f"from this questionnaire, in either direction."],
+        ))
+
+    return assessments
 
 
 # ---------------------------------------------------------------------------
 # recommendations
 # ---------------------------------------------------------------------------
 
+def _why_selected(domain: Domain, strategy: SupportStrategy,
+                  triggers: List[EvidenceItem]) -> str:
+    """Plain-language reason naming the item codes and the recorded answers."""
+    parts = [f"{e.item_code} ({e.observed_value and 'atypical' or 'typical'})"
+             for e in triggers]
+    items = ", ".join(parts)
+    label = domain.label[0].lower() + domain.label[1:]
+    return (f"Offered because your answer to {items} was recorded, and this "
+            f"idea is sometimes useful for that kind of answer. Optional; it is "
+            f"not a finding about your child.")
+
+
 def build_recommendations(assessments: List[SupportNeedAssessment],
-                          answers: FollowUpAnswers
+                          evidence: List[EvidenceItem]
                           ) -> List[SupportRecommendation]:
-    """Recommendations fire only on user-confirmed needs and stated
-    preferences. A hypothesis fires nothing; abstention fires nothing."""
-    by_id = {a.assessment_id: a for a in assessments}
+    """Suggestions fire only from recorded atypical answers.
+
+    Each strategy declares its own trigger items, so a strategy fires when its
+    items — not merely its domain's — were answered atypically, and it carries
+    exactly those item codes and their recorded values.
+    """
     recs: List[SupportRecommendation] = []
-
-    def _why(text: str) -> str:
-        return text
-
     for a in assessments:
-        if a.status is AssessmentStatus.USER_CONFIRMED:
-            q = QUESTIONS_BY_ID.get(a.followup_question_id or "")
-            domain = DOMAINS_BY_ID[a.domain]
-            for rid in domain.recommendation_ids:
-                s = STRATEGIES_BY_ID[rid]
-                recs.append(SupportRecommendation(
-                    recommendation_id=_recommendation_id(a.assessment_id, rid),
-                    domain=s.domain,
-                    title=s.title,
-                    description=s.description,
-                    intended_purpose=s.intended_purpose,
-                    evidence_references=list(s.evidence_references) +
-                                        [f"assessment:{a.assessment_id}"],
-                    applicability_conditions=list(
-                        s.applicability_conditions),
-                    related_assessment_ids=[a.assessment_id],
-                    basis=RecommendationBasis.USER_CONFIRMED,
-                    why_selected=_why(
-                        f"Offered because you said you would like support with "
-                        f"{domain.label.lower()}"
-                        + (f" (follow-up question {q.question_id})."
-                           if q else ".")),
-                    limitations=list(s.limitations) + [
-                        "Optional: use it only if it fits your situation."],
-                    source_attribution=s.source_attribution,
-                    review_status=s.review_status,
-                ))
-        elif a.status is AssessmentStatus.USER_STATED_PREFERENCE:
-            domain = DOMAINS_BY_ID[a.domain]
-            for rid in domain.recommendation_ids:
-                s = STRATEGIES_BY_ID[rid]
-                recs.append(SupportRecommendation(
-                    recommendation_id=_recommendation_id(a.assessment_id, rid),
-                    domain=s.domain,
-                    title=s.title,
-                    description=s.description,
-                    intended_purpose=s.intended_purpose,
-                    evidence_references=list(s.evidence_references) +
-                                        [f"assessment:{a.assessment_id}"],
-                    applicability_conditions=list(
-                        s.applicability_conditions),
-                    related_assessment_ids=[a.assessment_id],
-                    # A preference is not a confirmed need, so this is general
-                    # practice content *triggered by* the stated preference —
-                    # not a response to a need. The assessment reference keeps
-                    # the trigger auditable either way.
-                    basis=RecommendationBasis.GENERAL_GUIDANCE,
-                    why_selected=_why(
-                        f"Offered because you told us you prefer "
-                        f"'{a.user_preference}'; it changes how suggestions are "
-                        f"shared with you."),
-                    limitations=list(s.limitations),
-                    source_attribution=s.source_attribution,
-                    review_status=s.review_status,
-                ))
+        if a.status is not AssessmentStatus.EVIDENCE_SUGGESTED:
+            continue
+        domain = DOMAINS_BY_ID[a.domain]
+        for rid in domain.recommendation_ids:
+            s = STRATEGIES_BY_ID[rid]
+            triggers = _atypical_for(evidence, s.trigger_item_codes)
+            if not triggers:
+                # Domain-level evidence exists, but this strategy's own items
+                # were not the ones answered atypically. Do not fire it.
+                continue
+            recs.append(SupportRecommendation(
+                recommendation_id=_recommendation_id(a.assessment_id,
+                                                     s.recommendation_id),
+                domain=s.domain,
+                title=s.title,
+                description=s.description,
+                intended_purpose=s.intended_purpose,
+                triggering_question_ids=[e.item_code for e in triggers],
+                triggering_responses=[int(e.observed_value) for e in triggers],
+                evidence_references=[s.recommendation_source],
+                applicability_conditions=list(s.applicability_conditions),
+                related_assessment_ids=[a.assessment_id],
+                basis=RecommendationBasis.OBSERVED_RESPONSE_PATTERN,
+                recommendation_source=s.recommendation_source,
+                why_selected=_why_selected(domain, s, triggers),
+                limitations=list(s.limitations) + [
+                    domain.framing_note,
+                    "Optional: use it only if it fits your situation."],
+                source_attribution=strategy_source_attribution(s),
+                review_status=s.review_status,
+            ))
 
-    # de-duplicate identical (domain, strategy) offers, keeping the first
+    # de-duplicate identical (domain, title) offers, keeping the first
     seen: Dict[Tuple[str, str], SupportRecommendation] = {}
     for r in recs:
         key = (r.domain, r.title)
@@ -411,17 +227,41 @@ def build_recommendations(assessments: List[SupportNeedAssessment],
     return list(seen.values())
 
 
-def evaluate(evidence: List[EvidenceItem],
-             answers: FollowUpAnswers) -> Tuple[List[SupportNeedAssessment],
-                                                List[SupportRecommendation]]:
-    """Full engine pass: assessments first, then recommendations that reference
+def strategy_source_attribution(strategy: SupportStrategy) -> str:
+    """Human-readable provenance for a triggerable strategy."""
+    return ("curated project content (pending expert review)")
+
+
+def evaluate(evidence: List[EvidenceItem]
+             ) -> Tuple[List[SupportNeedAssessment],
+                        List[SupportRecommendation]]:
+    """Full engine pass: assessments first, then suggestions that reference
     only assessments that exist."""
-    assessments = build_assessments(evidence, answers)
-    recommendations = build_recommendations(assessments, answers)
+    assessments = build_assessments(evidence)
+    recommendations = build_recommendations(assessments, evidence)
     # references must resolve (defence in depth; the report validator also
     # checks this, and a failure here is a bug in the registries).
     known = {a.assessment_id for a in assessments}
     for r in recommendations:
         for aid in r.related_assessment_ids:
             assert aid in known, f"engine emitted a dangling assessment ref {aid}"
+        for code in r.triggering_question_ids:
+            assert code in ITEM_BY_CODE, (
+                f"engine emitted a trigger id {code!r} that is not a "
+                f"questionnaire item")
     return assessments, recommendations
+
+
+# ---------------------------------------------------------------------------
+# report content the engine owns
+# ---------------------------------------------------------------------------
+
+def unassessed_area_labels() -> List[str]:
+    """Labels of the areas the questionnaire does not ask about."""
+    return [f"{a.label} — {a.reason}" for a in UNASSESSED_AREAS]
+
+
+def asked_without_suggestion_codes(evidence: List[EvidenceItem]) -> List[str]:
+    """Of the items asked that carry no suggestion, which were asked here."""
+    asked = set(_asked_codes(evidence))
+    return [c for c in ASKED_WITHOUT_SUGGESTION if c in asked]

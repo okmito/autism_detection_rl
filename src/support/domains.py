@@ -1,124 +1,180 @@
-"""Candidate support domains and their evidence linkage — P4.
+"""Candidate support areas and their evidence linkage — P4 (revised).
 
-This module is *data, not logic*: each domain declares which questionnaire
-items (if any) can legitimately justify **asking** about it. The linkage is the
-only bridge from screening evidence to a support question, and it is one-way
-by design:
+This module is *data, not logic*: each support area declares which
+questionnaire items (if any) can legitimately justify offering it, and the
+linkage is the only bridge from screening evidence to a suggestion. It is
+one-way by construction:
 
-    observed response  ->  "may be worth exploring" question  ->  the person's
-                                                                 own answer
-    (screening data)       (never an assertion of difficulty)   (the only thing
-                                                                 that establishes
-                                                                 a need)
+    observed response  ->  an area where that kind of answer sometimes makes
+    (screening data)       an optional idea useful  ->  the person decides
+                                                                whether it does
 
-Domains whose ``evidence_item_codes`` are empty have **no screening-data
-linkage**: they can only ever be user-reported. A test enforces that they never
-fire on their own.
+Everything here is keyed on the **verified** questionnaire contract
+(``src/data/qchat10_contract.py`` via ``src/support/questionnaire.py``). The
+domain table that lived here before was written against a hand-copied list of
+item wording that had drifted from the contract, so its links pointed at the
+wrong constructs; the codes below are the corrected ones.
 
-Item codes refer to the Q-CHAT-10 projection used across this project
-(``src/data/qchat10_contract.py``); the wording the demo shows lives in
-``scripts/demo_app.py::ITEMS``.
+What the instrument measures, and what it does not
+--------------------------------------------------
+Q-CHAT-10 asks about looking when called, ease of eye contact, pointing to
+request, pointing to share interest, pretending, following gaze, wanting to
+comfort an upset person, first words, simple gestures, and staring at nothing.
+It does **not** ask about sensory sensitivities, routines or transitions, daily
+organisation, or how someone prefers information to be delivered. Those areas
+are listed in :data:`UNASSESSED_AREAS` and are disclosed as unmeasured; no rule
+in this project can turn an unrelated answer into a need in one of them.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Tuple
 
+from src.support.questionnaire import ITEM_BY_CODE
+
 
 @dataclass(frozen=True)
 class Domain:
+    """A support area this project can offer suggestions in.
+
+    ``trigger_item_codes`` is the *only* evidence that may offer this area, and
+    every code in it is validated against the instrument at import time below.
+    """
     domain_id: str
     label: str
-    #: Item codes whose observation may justify ASKING about this domain.
-    #: Empty means no screening-data linkage exists.
-    evidence_item_codes: Tuple[str, ...]
-    #: Follow-up questions that can establish (or rule out) a need here.
-    followup_question_ids: Tuple[str, ...]
-    #: Curated strategies that may be offered for this domain.
+    trigger_item_codes: Tuple[str, ...]
     recommendation_ids: Tuple[str, ...]
-    #: Shown wherever this domain appears, to frame it as exploration.
-    neutral_framing_note: str
-
-    @property
-    def has_data_linkage(self) -> bool:
-        return bool(self.evidence_item_codes)
+    #: Shown wherever this area appears, to frame it as an optional idea.
+    framing_note: str
 
 
 DOMAINS: Tuple[Domain, ...] = (
     Domain(
-        domain_id="social_communication",
-        label="Everyday communication",
-        evidence_item_codes=("A1", "A2", "A3", "A4", "A5", "A7", "A10"),
-        followup_question_ids=("q_comm_support",),
-        recommendation_ids=("rec_comm_processing_time", "rec_comm_visual_supports",
-                            "rec_comm_attention_cues"),
-        neutral_framing_note=(
-            "Answers like these can be worth exploring together. They do not "
-            "say anything about a person on their own."),
+        domain_id="getting_message_across",
+        label="Getting a message across",
+        trigger_item_codes=("A3", "A4", "A8", "A9"),
+        recommendation_ids=("rec_comm_visual_supports",),
+        framing_note=(
+            "Offered because answers about pointing, first words or simple "
+            "gestures are the kind of answer this idea is sometimes useful "
+            "for. Only you can say whether it fits your child."),
     ),
     Domain(
-        domain_id="emotional_regulation",
-        label="Big feelings and stressful moments",
-        evidence_item_codes=("A8",),
-        followup_question_ids=("q_emotion_support",),
-        recommendation_ids=("rec_emotion_predictable_scripts",
-                            "rec_emotion_quiet_break_option"),
-        neutral_framing_note=(
-            "Responses to others' distress are one small piece of a much bigger "
-            "picture."),
+        domain_id="getting_attention",
+        label="Getting attention before you speak",
+        trigger_item_codes=("A1", "A2"),
+        recommendation_ids=("rec_comm_attention_cues",),
+        framing_note=(
+            "Offered because answers about looking when called and ease of eye "
+            "contact are the kind of answer this idea is sometimes useful for."),
     ),
     Domain(
-        domain_id="sensory_environment",
-        label="Sensory comfort and environment",
-        evidence_item_codes=(),          # no Q-CHAT-10 item covers this
-        followup_question_ids=("q_sensory_support",),
-        recommendation_ids=("rec_sensory_quieter_space",
-                            "rec_sensory_adjustable_conditions"),
-        neutral_framing_note=(
-            "The screening questionnaire does not ask about sensory "
-            "experiences, so this area can only come from what you tell us."),
+        domain_id="processing_time",
+        label="Extra processing time",
+        trigger_item_codes=("A1", "A2", "A6"),
+        recommendation_ids=("rec_comm_processing_time",),
+        framing_note=(
+            "Offered because answers about attention and following your gaze "
+            "are the kind of answer this idea is sometimes useful for."),
     ),
     Domain(
-        domain_id="predictability_transitions",
-        label="Predictability, changes and routines",
-        evidence_item_codes=(),          # no Q-CHAT-10 item covers this
-        followup_question_ids=("q_transitions_support",),
-        recommendation_ids=("rec_transitions_advance_notice",
-                            "rec_transitions_visual_schedule"),
-        neutral_framing_note=(
-            "Not covered by the screening questions; only your own report can "
-            "raise it."),
-    ),
-    Domain(
-        domain_id="daily_living_organization",
-        label="Daily routines and organisation",
-        evidence_item_codes=(),          # no Q-CHAT-10 item covers this
-        followup_question_ids=("q_daily_support",),
-        recommendation_ids=("rec_daily_optional_tools",),
-        neutral_framing_note=(
-            "Not covered by the screening questions; only your own report can "
-            "raise it."),
-    ),
-    Domain(
-        domain_id="communication_accessibility",
-        label="How information reaches you",
-        evidence_item_codes=(),          # a preference, not a screening finding
-        followup_question_ids=("q_comm_preference", "q_accessibility_preference"),
-        recommendation_ids=("rec_comm_preference_choice",),
-        neutral_framing_note=(
-            "This is about your preferences, not about any difficulty."),
+        domain_id="naming_feelings",
+        label="Noticing and naming feelings",
+        trigger_item_codes=("A7",),
+        recommendation_ids=("rec_emotion_name_what_you_see",),
+        framing_note=(
+            "Offered because the answer about comforting someone who is upset "
+            "is the kind of answer this idea is sometimes useful for. It says "
+            "nothing about how a child experiences feelings."),
     ),
 )
 
 DOMAINS_BY_ID = {d.domain_id: d for d in DOMAINS}
 
 
+@dataclass(frozen=True)
+class UnassessedArea:
+    """A support area the questionnaire does not ask about.
+
+    Present so the report can name these areas as unmeasured. A recommendation
+    can never be derived from one: there is no evidence to derive it from.
+    """
+    area_id: str
+    label: str
+    reason: str
+
+
+UNASSESSED_AREAS: Tuple[UnassessedArea, ...] = (
+    UnassessedArea(area_id="sensory_environment",
+                   label="Sensory comfort and environment",
+                   reason="the questionnaire does not ask about sounds, "
+                          "lights, textures or places"),
+    UnassessedArea(area_id="predictability_transitions",
+                   label="Predictability, changes and routines",
+                   reason="the questionnaire does not ask about routines, "
+                          "advance notice or transitions"),
+    UnassessedArea(area_id="daily_living_organization",
+                   label="Daily routines and organisation",
+                   reason="the questionnaire does not ask about planning or "
+                          "organising daily activities"),
+    UnassessedArea(area_id="communication_accessibility",
+                   label="How information reaches you",
+                   reason="the questionnaire does not ask how someone prefers "
+                          "information to be shared"),
+)
+
+#: Items the questionnaire asks that carry no curated, reviewed suggestion in
+#: this project. Offered nothing, and disclosed rather than quietly dropped.
+ASKED_WITHOUT_SUGGESTION: Tuple[str, ...] = ("A5", "A10")
+
+
 def domain_for_item(item_code: str) -> Tuple[Domain, ...]:
     """Domains whose evidence linkage includes ``item_code`` (may be empty)."""
-    return tuple(d for d in DOMAINS if item_code in d.evidence_item_codes)
+    return tuple(d for d in DOMAINS if item_code in d.trigger_item_codes)
 
 
 def linked_item_codes() -> Tuple[str, ...]:
     """Every item code used by any domain's evidence linkage."""
-    codes = {c for d in DOMAINS for c in d.evidence_item_codes}
+    codes = {c for d in DOMAINS for c in d.trigger_item_codes}
     return tuple(sorted(codes))
+
+
+def triggerable_item_codes() -> Tuple[str, ...]:
+    """Items that can offer at least one suggestion (the rest cannot)."""
+    return linked_item_codes()
+
+
+# ---------------------------------------------------------------------------
+# the registry must agree with the instrument, or nothing else can be trusted
+# ---------------------------------------------------------------------------
+
+def _validate_registry() -> None:
+    for domain in DOMAINS:
+        if not domain.trigger_item_codes:
+            raise ValueError(f"domain {domain.domain_id} declares no trigger "
+                             f"items, so it could never offer anything")
+        if not domain.recommendation_ids:
+            raise ValueError(f"domain {domain.domain_id} offers no suggestion")
+        for code in domain.trigger_item_codes:
+            if code not in ITEM_BY_CODE:
+                raise ValueError(
+                    f"domain {domain.domain_id} links item {code!r}, which the "
+                    f"verified questionnaire contract does not define "
+                    f"(known: A1..A10)")
+    codes = [d.domain_id for d in DOMAINS]
+    if len(codes) != len(set(codes)):
+        raise ValueError("domain ids must be unique")
+    area_ids = [a.area_id for a in UNASSESSED_AREAS]
+    if len(area_ids) != len(set(area_ids)):
+        raise ValueError("unassessed area ids must be unique")
+    overlap = {d.domain_id for d in DOMAINS} & set(area_ids)
+    if overlap:
+        raise ValueError(f"an area cannot be both triggerable and unassessed: "
+                         f"{sorted(overlap)}")
+    for code in ASKED_WITHOUT_SUGGESTION:
+        if code not in ITEM_BY_CODE:
+            raise ValueError(f"ASKED_WITHOUT_SUGGESTION names {code!r}, which "
+                             f"is not a questionnaire item")
+
+
+_validate_registry()
