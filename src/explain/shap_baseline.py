@@ -1,4 +1,21 @@
-"""SHAP comparison baseline — §18.3"""
+"""SHAP comparison baseline — §18.3.
+
+⚠ DEPRECATED for new code (P3-outcome, 2026-10-09).
+----------------------------------------------------
+Despite the module name this is **not SHAP**. It computes, for each observed
+item, a single-flip delta ``base_p - predictor(flipped)``. It defines no
+coalition value function and no baseline, it is not additive, and its output
+must not be presented as a Shapley attribution. (Recorded as an open problem:
+AGENT_PROGRESS.md, known open item 9.)
+
+It is retained unchanged so the existing ``faithfulness_saudi.json`` artifact
+and its contract tests keep working. New code must use
+``src/explain/attribution.py`` — exact group-Shapley over the questionnaire
+items under the predictor's own partial-state value function.
+
+The returned dict's ``note`` field carries this disclosure so any artifact
+built from this module cannot silently present its values as SHAP.
+"""
 from __future__ import annotations
 import numpy as np
 from typing import List, Dict, Any

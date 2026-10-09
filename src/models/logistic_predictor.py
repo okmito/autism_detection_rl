@@ -164,6 +164,45 @@ class LogisticPredictor:
             return float(1.0 / (1.0 + np.exp(-float(self.model.intercept_[0]))))
         return float(self._table[consistent].sum() / mass)
 
+    def probability_with_prior(self, state: Dict[str, Any],
+                               prior_override: Sequence[float]) -> float:
+        """Marginalised probability under an ARBITRARY factorised prior (pure).
+
+        Used by the uncertainty layer (``src/explain/uncertainty.py``) to measure
+        how much the screening estimate moves when the prior over unobserved
+        items is resampled. Does not mutate the predictor or the state; with
+        ``prior_override == self.prior`` it reproduces :meth:`predict_state` to
+        floating point (asserted in tests).
+
+        "MISSING" items are ignored exactly as in :meth:`predict_state`.
+        """
+        from src.env.state import OBSERVED
+
+        prior = np.asarray(prior_override, dtype=float).ravel()
+        if prior.shape != (N_ITEMS,):
+            raise ValueError(
+                f"prior must have {N_ITEMS} entries (one per item), got "
+                f"{prior.shape}")
+        prior = np.clip(prior, 1e-6, 1.0 - 1e-6)
+        mask = np.asarray(state["mask"], dtype=int)
+        value = np.asarray(state["value"], dtype=int)
+        consistent = np.ones(self._configs.shape[0], dtype=bool)
+        for j in range(mask.size):
+            if mask[j] == OBSERVED:
+                consistent &= (self._configs[:, j] == value[j])
+        # _table == base * weights(self.prior), so the calibration-only factor:
+        base = self._table / self._weights
+        log_prior = np.zeros(self._configs.shape[0], dtype=float)
+        for j in range(N_ITEMS):
+            log_prior += np.where(self._configs[:, j] == 1,
+                                  np.log(prior[j]), np.log(1.0 - prior[j]))
+        w = np.exp(log_prior - log_prior.max())
+        mass = float(w[consistent].sum())
+        if mass <= 0.0:
+            return float(np.clip(
+                1.0 / (1.0 + np.exp(-float(self.model.intercept_[0]))), 0.0, 1.0))
+        return float((base[consistent] * w[consistent]).sum() / mass)
+
     # ------------------------------------------------------------- fitting
     @classmethod
     def fit(cls, train_records: Sequence[Dict[str, Any]],
