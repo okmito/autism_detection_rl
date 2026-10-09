@@ -25,6 +25,7 @@ evidence items) and the person's own follow-up answers.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Dict, List, Tuple
 
 from src.support.domains import DOMAINS, DOMAINS_BY_ID, Domain
@@ -38,6 +39,31 @@ from src.support.strategies import STRATEGIES_BY_ID
 #: The Q-CHAT-10 binary projection used throughout this project:
 #: ``1`` = atypical/concerning response (see README §15 and the contract).
 ATYPICAL_VALUE = 1
+
+#: Ids in this layer are bounded by the contracts in ``src.support.schemas``
+#: (``recommendation_id``: 64 characters). A composite id is the assessment id
+#: plus the strategy's registry id, so a long domain plus a long strategy can
+#: exceed the bound — which used to crash report assembly for a domain the
+#: questionnaire legitimately supports. The helper below keeps ids readable and
+#: inside the bound, and falls back to a stable digest so a future registry
+#: entry cannot reintroduce the crash.
+MAX_ID_LENGTH = 64
+
+
+def _recommendation_id(assessment_id: str, strategy_id: str) -> str:
+    """Composite recommendation id, bounded and deterministic.
+
+    The strategy's ``rec_`` registry prefix is redundant inside the composite
+    (the whole id starts with ``rec-``); dropping it buys the length that the
+    longest domain/strategy pairs need.
+    """
+    stem = (strategy_id[len("rec_"):] if strategy_id.startswith("rec_")
+            else strategy_id)
+    rid = f"rec-{assessment_id}-{stem}"
+    if len(rid) <= MAX_ID_LENGTH:
+        return rid
+    digest = hashlib.sha1(strategy_id.encode("utf-8")).hexdigest()[:8]
+    return f"rec-{assessment_id}-{digest}"
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +352,7 @@ def build_recommendations(assessments: List[SupportNeedAssessment],
             for rid in domain.recommendation_ids:
                 s = STRATEGIES_BY_ID[rid]
                 recs.append(SupportRecommendation(
-                    recommendation_id=f"rec-{a.assessment_id}-{rid}",
+                    recommendation_id=_recommendation_id(a.assessment_id, rid),
                     domain=s.domain,
                     title=s.title,
                     description=s.description,
@@ -352,7 +378,7 @@ def build_recommendations(assessments: List[SupportNeedAssessment],
             for rid in domain.recommendation_ids:
                 s = STRATEGIES_BY_ID[rid]
                 recs.append(SupportRecommendation(
-                    recommendation_id=f"rec-{a.assessment_id}-{rid}",
+                    recommendation_id=_recommendation_id(a.assessment_id, rid),
                     domain=s.domain,
                     title=s.title,
                     description=s.description,

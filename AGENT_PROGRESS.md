@@ -41,6 +41,16 @@ ships `pending_expert_review` and the report says so.
 * an unanswered question behaves exactly like a skipped questionnaire (locked by
   a test): a missing question id is never read as "no".
 
+**One regression found after the fact and fixed in the same pass:** the
+composite recommendation id was `"rec-{assessment_id}-{strategy_id}"`, which is
+67 characters for `predictability_transitions` ×
+`rec_transitions_visual_schedule` — over the contract's 64-character bound, so
+endorsing that domain crashed report assembly instead of producing a report.
+`engine._recommendation_id` now drops the strategy's redundant `rec_` prefix
+(max observed id 61 characters) and falls back to a stable 8-hex digest if a
+future registry entry would exceed the bound. Guard tests enumerate the whole
+answer space and assert every produced id fits and is unique.
+
 **Tests:** +90 in the support layer (schemas 28, registry 6, questions 8,
 strategies 7, engine 26, report 20) and +13 demo-wiring tests
 (`tests/test_support_demo.py`), all on synthetic fixtures. Suite:

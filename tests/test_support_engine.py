@@ -15,8 +15,9 @@ from __future__ import annotations
 import pytest
 
 from src.support.domains import DOMAINS_BY_ID
-from src.support.engine import (evaluate, questions_to_offer,
-                                validate_followup_answers)
+from src.support.engine import (MAX_ID_LENGTH, _recommendation_id, evaluate,
+                                questions_to_offer, validate_followup_answers)
+from src.support.questions import QUESTIONS_BY_ID
 from src.support.schemas import (AssessmentStatus, EvidenceItem,
                                  FollowUpAnswers, RecommendationBasis,
                                  SourceType)
@@ -208,6 +209,53 @@ def test_suggested_questions_are_exactly_the_linked_triggered_ones():
             "q_comm_preference", "q_accessibility_preference"} <= opt
     assert len(suggested) + len(optional) == len(
         {q.question_id for q in suggested} | opt)
+
+
+# ---------------------------------------------------------------------------
+# id bounds (a regression once crashed report assembly for one domain)
+# ---------------------------------------------------------------------------
+
+def _all_yes_answers() -> FollowUpAnswers:
+    """Endorse every need and state every preference — the answer set that
+    fires every recommendation path in the registries."""
+    return FollowUpAnswers(answers=[
+        {"question_id": q.question_id, "value": "yes",
+         **({"choice": q.choices[0]} if q.choices else {})}
+        for q in QUESTIONS_BY_ID.values()])
+
+
+def test_every_recommendation_path_produces_a_valid_id():
+    """The composite ids must fit the contract's 64-character bound for every
+    domain/strategy pair, not just the short ones."""
+    assessments, recs = evaluate([], _all_yes_answers())
+    assert recs, "this answer set must fire recommendations"
+    assert assessments
+    for r in recs:
+        assert len(r.recommendation_id) <= MAX_ID_LENGTH, r.recommendation_id
+        assert r.recommendation_id.startswith("rec-")
+
+
+def test_long_domain_and_strategy_still_yield_a_bounded_unique_id():
+    """The digest fallback keeps the id inside the bound when the readable
+    composite would exceed it."""
+    long_assessment = "as-" + "x" * 40
+    for strategy_id in ("rec_transitions_visual_schedule",
+                        "rec_sensory_adjustable_conditions",
+                        "rec_" + "y" * 40):
+        rid = _recommendation_id(long_assessment, strategy_id)
+        assert len(rid) <= MAX_ID_LENGTH, (rid, strategy_id)
+        assert rid.startswith(f"rec-{long_assessment}-")
+    # digest path: deterministic and distinct per strategy
+    a = _recommendation_id(long_assessment, "rec_" + "y" * 40)
+    b = _recommendation_id(long_assessment, "rec_" + "z" * 40)
+    assert a != b
+    assert _recommendation_id(long_assessment, "rec_" + "y" * 40) == a
+
+
+def test_recommendation_ids_are_unique_across_the_whole_answer_space():
+    _, recs = evaluate(ATYPICAL_A1 + ATYPICAL_A8, _all_yes_answers())
+    ids = [r.recommendation_id for r in recs]
+    assert len(ids) == len(set(ids))
 
 
 # ---------------------------------------------------------------------------
