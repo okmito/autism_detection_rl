@@ -94,6 +94,20 @@ First start trains the predictor (~20 s) and caches it to `results/demo_model_sa
 
 The page shows the data audit, an interactive adaptive interview (greedy vs random policy), the per-answer belief trace, the referral decision with a counterfactual explanation, and the generated result artifacts.
 
+**Outcome explanation (P3-outcome).** The result screen now answers *why this
+result* as well as *which question*: a "Why this result?" panel ranks the
+observed answers by their exact group-Shapley contribution to the screening
+estimate, lists the answers that move it toward and away from referral, reports
+the still-unasked items the model accounts for by prior, states the
+per-session stability band where the predictor supports one (v3) or its
+absence (v2), shows which single answer changes would move the decision across
+the threshold, and prints the limitations and the non-diagnostic disclaimer.
+Every field is computed by the backend (`src/explain/outcome.py`, schema
+`outcome-explanation/1.0`) and rendered without client-side computation; the
+terminal demo prints the same object at STEP 6b. Design record and measured
+faithfulness: `docs/EXPLAINABILITY_OUTCOME_PLAN.md`,
+`results/outcome_explainability_saudi.json` (Step 17).
+
 **What the demo does and does not show.** It serves `GreedyIGPolicy` (information
 gain) and `RandomPolicy` only — the DQN/PPO arms are benchmarked offline in
 Step 5, not here. Two things on the page are deliberately unflattering, because they
@@ -171,6 +185,7 @@ records = load_dataset("nz", synthetic=True)
 | `V2_PRISMA_SEARCH_LOG.md` | PRISMA template (research question, 10 databases, 12 queries, criteria, no-claim rule) |
 | `AUDIT_UPDATE_2026-09-04.md` | consolidation of the 2026-09-04 audit: re-runs, cross-checks, change log |
 | `Master-Project-Specification_FINAL.md` | source of truth (spec §1-§27) |
+| `docs/EXPLAINABILITY_OUTCOME_PLAN.md` | P3-outcome design record: the verified outcome path, exact group-Shapley attribution, counterfactuals, prior-sensitivity band, measured faithfulness |
 
 **Freshness (updated 2026-10-01).** Living documents — `AGENT_PROGRESS.md`, `README.md`, `AUDIT_REPORT.md`, `DATA_VERIFICATION_REPORT.md`, `STATE_COUNT_VERIFICATION.md`, `diagnosisReady.md`, `RL_TRAINING_REPORT.md`, `POLICY_BENCHMARK_REPORT.md`, `V1_NZ_DATASET_RESOLUTION.md`, `V2_PRISMA_SEARCH_LOG.md` — are all current. `AUDIT_UPDATE_2026-09-04.md` is an intentionally **frozen historical snapshot**; its figures are superseded and it carries a header saying so. Current state is always `AGENT_PROGRESS.md` (163 tests, 0 skipped).
 
@@ -220,11 +235,11 @@ src/env/state.py, environment.py, costs.py
 src/solvers/exact_custom.py, exact_adapter.py
 src/models/masked_predictor.py
 src/policies/dqn.py, ppo.py, greedy.py, random_policy.py, irt_cat.py, dqn_cat.py, static_rfe.py, static_fixed.py, beta_greedy.py, replay.py
-src/explain/trace.py, counterfactual.py, shap_baseline.py
+src/explain/attribution.py, counterfactual.py, uncertainty.py, outcome.py, limitations.py, render.py, trace.py, shap_baseline.py (deprecated: not SHAP)
 src/eval/metrics.py, bootstrap.py, power.py, fwer.py, subgroup.py, gates.py, external_validation.py, qchat10_subset.py
 src/ablation/runner.py
 configs/config.yaml (Hydra)
-scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py, scripts/step5_policy_benchmark.py, scripts/step6_lambda_sweep.py, scripts/step7_rl_diagnosis.py, scripts/step8_evoi_scale_analysis.py, scripts/step9_v4_v7_gates.py, scripts/step10_external_validation.py
+scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py, scripts/step5_policy_benchmark.py, scripts/step6_lambda_sweep.py, scripts/step7_rl_diagnosis.py, scripts/step8_evoi_scale_analysis.py, scripts/step9_v4_v7_gates.py, scripts/step10_external_validation.py, scripts/step17_outcome_explainability.py
 scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (browser demo)
 docs/prisma/screening_worksheet.csv
 tests/ (487 tests, all passing)
@@ -258,8 +273,28 @@ Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/S
 
 ## Tests — §21
 ```
-pytest tests -q   # 487 tests
+pytest tests -q   # 437 passed, 12 failed (all environmental — see below), 78 skipped
 ```
+
+**Test-count history.** The figure has been wrong in this file several times, in
+both directions, so it is worth knowing how to check it rather than trusting it.
+Verify with the command above; the number is the point-in-time count, not a target.
+Early revisions claimed 79 / 126 / 163 / 191 / 204 / 453 / 487 — each correct when
+written on the machine that wrote it.
+
+**2026-10-09 (branch `feat/outcome-explainability`):** 437 passed, 12 failed, 78
+skipped. All 12 failures are environmental or pre-existing and are itemised in
+`AGENT_PROGRESS.md` (ninth pass): 6 × frozen-v2 artifact-hash pins (the recorded
+hashes came from another machine; regeneration here is deterministic), 1 × the
+retained Step-14 evaluation artifact (absent on this machine, and Step 14 now
+refuses to regenerate it by design because that run predates `random_fixed`),
+1 × a pre-existing doc-rule violation (non-novelty uses of "first"/"only" in
+`POLICY_BENCHMARK_REPORT.md`, `RL_TRAINING_REPORT.md`, `V6_LAMBDA_DECISION.md`,
+`V6_STOPPING_THRESHOLD_DECISION.md`), and 3 × `test_v4_v7_validation` (need the
+gitignored `data/QCHAT_dataset2 mendeley.sav`). No failure is a code regression.
+
+Skips are dominated by "artifact not generated": run the Step 2–8 and 12–16
+scripts to reduce them (Step 10 exits 2 while blocked by design).
 24 P1-f Beta-prior / EVOI tests (`tests/test_p1f_beta_greedy.py` + 13 Step-7 RL-diagnosis tests (`tests/test_step7_rl_diagnosis.py`) + 36 Step-6 λ-sweep + canonical-split + beta_greedy + lambda_units_caveat tests (`tests/test_step6_lambda_sweep.py`) + 23 P1-d baseline + predictor-reproducibility tests (`tests/test_p1d_baselines.py`) + 28 RL training regressions (`tests/test_rl_training.py`) + 14 Step-5 benchmark contracts (`tests/test_step5_benchmark.py`) + 21 demo-behaviour audit regressions (`tests/test_demo_behavior_audit.py`) + 10 DP tractability invariants + 4 legal-action tests + 4 Step 3 artifact contracts + 4 reachable-state-count tests + 3 V-2 no-claim rule tests + 3 leakage tests + 2 budget-exhaustion + 2 counterfactual + 2 reward-bounds + 2 state-encoding + 8 single-test modules. All 204 pass; none skip.
 
 Covers state encoding, legal actions, budget, state counts, reward bounds, predictor, exact optimality, circularity, leakage, counterfactual, threshold freeze, common evaluator, trace, fixed subset, DP tractability, preliminary report metadata, PRISMA template presence, greedy determinism + legality, random-policy variation semantics, belief bounds and continuity, the documented `p_hat >= tau` decision rule at both env and API layers, API risk continuity, faithful frontend rendering of the backend risk value, and — added 2026-10-01 — the λ-sweep invariants (`V*` non-increasing in λ, the degeneracy boundary, support purity by depth), the canonical split (three disjoint parts, and every consumer agreeing on one fingerprint), and the full P0 register below.
@@ -316,6 +351,7 @@ Step 3 (`scripts/step3_preliminary_reports.py`) emits Saudi-only preliminary rep
 | `results/lambda_sweep_saudi.{json,csv}` | Step-6 λ (question-cost) sweep, 8 λ × 8 B = 64 cells. **Predictor-independent.** Records `V*`, item counts, `stopped_early_frac`, the degeneracy boundary, and the support-purity-by-depth diagnostic. **Decision input for V-6 — not a signed-off result** |
 | `results/rl_diagnosis_saudi.{json,csv}` | Step-7 bounded RL-collapse diagnosis: 5 seeds × 4 episode budgets × 2 learning targets (bootstrap vs return-to-go), with per-seed training curves and state-coverage traces |
 | `results/evoi_scale_saudi.{json,csv}` | Step-8 EVOI scale analysis + stopping-rule sensitivity: the decision statistic's distribution (min/median/mean/p75/p90/p95/max) under both the support posterior and the neural predictor, the stop rate at each candidate threshold, and an offline sensitivity sweep over six stopping rules. **Selects no threshold.** **Decision input for V-6 — not a signed-off result** |
+| `results/outcome_explainability_saudi.json` | Step-17 outcome explainability (P3-outcome): per-session exact group-Shapley attributions, verified counterfactuals, prior-sensitivity band, limitations, plus faithfulness aggregates (additivity error, deletion/insertion AUC vs random, rank stability, overhead). **Explains the model, not the person; screening result, not a diagnosis** |
 | `results/demo_model_saudi_seed0_platt_v2.{pt,pkl}` | demo predictor cache; the filename encodes `predictor_version` so a semantics change cannot leave stale weights behind |
 
 These numbers are from the **real CSVs** in `data/raw/` (re-run 2026-09-30; every artifact carries `"source": "real"`). The NZ 1,054-row cohort is the exception — it is still missing pending V-1, so any NZ number remains synthetic-fallback and is never reported.

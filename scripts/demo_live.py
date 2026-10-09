@@ -42,6 +42,9 @@ from src.models.masked_predictor import MaskedPredictor
 from src.policies.greedy import GreedyIGPolicy
 from src.policies.random_policy import RandomPolicy
 from src.explain.counterfactual import find_counterfactual
+from src.explain.outcome import explain_outcome
+from src.explain.render import render_text
+from src.env.costs import get_costs
 from src.solvers.exact_custom import ExactDP
 
 BUDGET = 6          # max questions per episode (configs/config.yaml: env.question_budget)
@@ -167,6 +170,18 @@ def main() -> int:
         print(f"explanation       : if answer to {cf['item']} were {cf['flipped_value']} instead of "
               f"{cf['original_value']}, risk would move to {cf['new_p']:.3f} and the")
         print(f"                    decision would flip - this is a minimal counterfactual")
+
+    # ------------------------------------------------------------- STEP 6b
+    hr("STEP 6b - OUTCOME EXPLANATION (exact group-Shapley over the answers given)")
+    print("why the model produced this screening result, not which question it asked:\n")
+    X_train = np.array([np.asarray(r["item_responses"], dtype=float) for r in train])
+    explanation = explain_outcome(
+        ep, predictor, tau=TAU, costs=get_costs(N_ITEMS), prior=None,
+        reference_rows=X_train, dataset_tag="saudi",
+        circularity=audit["classification"],
+        label_source=rec["label_source"], budget=BUDGET,
+        tag="terminal demo — research prototype, not a diagnostic device")
+    print(render_text(explanation))
 
     # ------------------------------------------------------------- STEP 7
     hr(f"STEP 7 - POLICY COMPARISON ON THE FULL TEST SET (B={BUDGET} episodes)")

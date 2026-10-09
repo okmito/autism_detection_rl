@@ -413,6 +413,32 @@ class Session:
                                      if steps else None),
         }
 
+    def _explain(self, ep_result: dict) -> dict:
+        """Outcome explanation for this session's result (P3-outcome).
+
+        Uses the same frozen demo predictor that produced the estimate. The v2
+        neural predictor carries no item prior, so counterfactual feasibility
+        and the sensitivity band are reported as unavailable rather than
+        guessed — exactly as the schema requires.
+        """
+        from src.explain.outcome import explain_outcome
+
+        records = S["records"] or []
+        audit = audit_circularity(records) if records else {}
+        X_train = np.array([np.asarray(r["item_responses"], dtype=float)
+                            for r in (S["train"] or [])])
+        return explain_outcome(
+            ep_result, S["predictor"], tau=TAU,
+            costs=np.ones(N_ITEMS, dtype=float),
+            prior=None,
+            reference_rows=X_train if len(X_train) else None,
+            dataset_tag="saudi",
+            circularity=audit.get("classification"),
+            label_source=self.record.get("label_source"),
+            budget=BUDGET,
+            tag="demo — research prototype, not a diagnostic device",
+        )
+
     def _finish(self, reason: str) -> dict:
         p = predict(self.state)
         decision = "REFERRAL_RECOMMENDED" if p >= TAU else "NO_REFERRAL_INDICATED"
@@ -422,7 +448,11 @@ class Session:
                 "items_asked": [f"A{j + 1}" for j in self.items_asked],
                 "trace": self.trace, "counterfactual": cf,
                 "true_label": int(self.record["label"]), "stop_reason": reason,
-                "selection_summary": self._selection_summary()}
+                "selection_summary": self._selection_summary(),
+                "explanation": self._explain({
+                    "p_hat": p, "decision": decision, "trace": self.trace,
+                    "items_asked": self.items_asked,
+                    "stop_reason": reason, "final_state": self.state})}
 
     def run_auto(self) -> dict:
         ep = run_episode(self.record, BUDGET, 0, self.policy, predict, 0.0, tau=TAU)
@@ -443,7 +473,8 @@ class Session:
                 "items_asked": [f"A{j + 1}" for j in ep["items_asked"]],
                 "trace": ep["trace"], "counterfactual": cf,
                 "true_label": int(self.record["label"]), "stop_reason": ep["stop_reason"],
-                "selection_summary": self._selection_summary()}
+                "selection_summary": self._selection_summary(),
+                "explanation": self._explain(ep)}
 
     def _replayed_trace(self) -> list[dict]:
         """Re-walk the realised item sequence, diagnosing each decision point.

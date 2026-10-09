@@ -389,6 +389,11 @@
       <div class="dbody" id="resWhyBody"></div>
     </details>
 
+    <details id="resOutcomeBox">
+      <summary>Why this result?</summary>
+      <div class="dbody" id="resOutcomeBody"></div>
+    </details>
+
     <details>
       <summary>Sensitivity of this result</summary>
       <div class="dbody" id="resCfBody"></div>
@@ -807,6 +812,8 @@ function showResult(res, policyId) {
   renderWhy(res.selection_summary ? null : state.lastSelection,
     state.lastQuestionCode, 'resWhyBody');
 
+  renderOutcome(res.explanation);
+
   const cf = res.counterfactual;
   $('resCfBody').innerHTML = cf
     ? '<p>If the answer to <b>' + esc(cf.item) + '</b> were <b>' + esc(cf.flipped_value) +
@@ -817,6 +824,105 @@ function showResult(res, policyId) {
 
   renderTrace(res.trace);
   $('newBtn').focus();
+}
+
+/* ---------------------------------------------------------------------------
+   Why this result? — P3-outcome.
+   Renders ONLY fields the backend returned in result.explanation
+   (src/explain/outcome.py, schema outcome-explanation/1.0). No explanation
+   content is computed client-side; numbers are formatted, never derived.
+   --------------------------------------------------------------------------- */
+function renderOutcome(ex) {
+  const box = $('resOutcomeBody');
+  if (!ex) {
+    box.innerHTML = '<p>No outcome explanation was returned for this session.</p>';
+    return;
+  }
+  const parts = [];
+
+  // --- contributions (exact group-Shapley over observed responses) ---
+  const contribs = (ex.contributions && ex.contributions.length) ? ex.contributions : [];
+  if (contribs.length) {
+    const rows = contribs.map(c => {
+      const pts = 100 * Number(c.phi || 0);
+      const w = Math.min(100, Math.abs(pts) * 4);   // bar scale only
+      const dir = c.direction === 'raises'
+        ? '<span class="chip" style="border-color:var(--line)">raises</span>'
+        : (c.direction === 'lowers'
+          ? '<span class="chip" style="border-color:var(--line)">lowers</span>' : '');
+      const resp = c.response === 1 ? 'atypical' : (c.response === 0 ? 'typical' : '—');
+      return '<tr><td class="num">' + esc(c.rank) + '</td><td>' + esc(c.item) +
+        '</td><td>' + esc(resp) + '</td>' +
+        '<td class="num">' + (pts >= 0 ? '+' : '') + pts.toFixed(1) + '</td>' +
+        '<td>' + dir + '</td>' +
+        '<td style="width:84px"><span style="display:block;height:6px;border-radius:99px;' +
+        'background:' + (c.phi >= 0 ? 'var(--accent)' : 'var(--line)') + ';width:' + w + '%"></span></td></tr>';
+    }).join('');
+    parts.push('<table class="trace"><thead><tr><th>#</th><th>Item</th>' +
+      '<th>Answer</th><th style="text-align:right">Effect on estimate</th>' +
+      '<th>Direction</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>');
+  } else {
+    parts.push('<p>No observed responses were available to attribute.</p>');
+  }
+
+  // --- supporting / opposing evidence ---
+  const ev = ex.evidence || {};
+  if ((ev.supporting && ev.supporting.length) || (ev.opposing && ev.opposing.length)) {
+    parts.push('<p style="margin-top:10px">Answers moving the estimate ' +
+      '<b>toward referral</b>: ' + esc((ev.supporting || []).join(', ') || '—') +
+      '. Answers moving it <b>away</b>: ' +
+      esc((ev.opposing || []).join(', ') || '—') + '.</p>');
+  }
+  if (ev.unobserved_items_marginalised && ev.unobserved_items_marginalised.length) {
+    parts.push('<p>Not asked in this session: ' +
+      esc(ev.unobserved_items_marginalised.join(', ')) +
+      '. The estimate accounts for them through the model\'s prior over ' +
+      'unobserved items, not through any answer.</p>');
+  }
+
+  // --- confidence: only what the architecture supports ---
+  const unc = ex.uncertainty || {};
+  if (unc.available && unc.interval) {
+    parts.push('<p style="margin-top:10px">Stability of this estimate: over ' +
+      'resamples of the model\'s prior at the training sample size it moves ' +
+      'between <b>' + num(unc.interval[0], 3) + '</b> and <b>' +
+      num(unc.interval[1], 3) + '</b>. This is model stability, not clinical ' +
+      'certainty.</p>');
+  } else {
+    parts.push('<p style="margin-top:10px">Stability of this estimate: no ' +
+      'per-session interval is available for this predictor version; the point ' +
+      'estimate is reported without one.</p>');
+  }
+
+  // --- what would change the model's output ---
+  const cf = ex.counterfactuals || {};
+  const flips = (cf.single_flips || []).filter(f => f.flips_decision);
+  if (flips.length) {
+    const items = flips.slice(0, 4).map(f => {
+      const to = f.flipped_value === 1 ? 'atypical' : 'typical';
+      return 'if <b>' + esc(f.item) + '</b> had been answered <b>' + esc(to) +
+        '</b> the estimate would have been <b>' + num(f.new_p, 3) + '</b>';
+    }).join('; ');
+    parts.push('<p style="margin-top:10px">What would change the model\'s output: ' +
+      items + '. These describe the model\'s behaviour under different answers, ' +
+      'not the person, and are not advice.</p>');
+  } else if (cf.robust_to_all_single_flips) {
+    parts.push('<p style="margin-top:10px">What would change the model\'s output: ' +
+      'no single change to any answer given would move it across the operating ' +
+      'threshold.</p>');
+  }
+
+  // --- limitations + mandatory disclaimer ---
+  if (ex.limitations && ex.limitations.length) {
+    parts.push('<ul style="margin:10px 0 0;padding-left:18px">' +
+      ex.limitations.map(l => '<li>' + esc(l) + '</li>').join('') + '</ul>');
+  }
+  parts.push('<p style="margin-top:10px"><b>' + esc(ex.disclaimer || '') + '</b></p>');
+  if (ex.warnings && ex.warnings.length) {
+    parts.push('<p style="margin-top:6px">' +
+      ex.warnings.map(w => esc(w)).join('<br>') + '</p>');
+  }
+  box.innerHTML = parts.join('');
 }
 
 function renderTrace(trace) {
@@ -852,6 +958,7 @@ function resetAll() {
   $('resResearch').innerHTML = '';
   $('resCfBody').innerHTML = '';
   $('resWhyBody').innerHTML = '';
+  $('resOutcomeBody').innerHTML = '';
   $('resTrace').innerHTML = '';
   $('whyBody').innerHTML = '';
   setAnswersEnabled(false);

@@ -1,15 +1,85 @@
 # Current Project State
 
-**Last updated:** 2026-10-01 (Parts 0+1+2+3, three RL/method audits, then P1-a/b/d)
-**Operator request:** "make the project ready for diagnosis" → audit produced `diagnosisReady.md`; Parts 0–3 implemented.
-**Branch state:** see git log. **204 tests pass, 0 skipped.**
-**All artifacts are reproducible from their recorded seed** (Reproducible from the recorded seed, with the sole exception of recorded wall-clock fields (generated, wall_seconds, 	ime_sec, dp_seconds); every substantive number is identical across reruns.) and carry `predictor_version: 2` and `split_fingerprint: b2021998a83e7224`.
+**Last updated:** 2026-10-09 (P3-outcome: explainability of the final screening outcome)
+**Operator request:** "verify everything and start building the idea we have planned" — the outcome-explainability phase (P3) of the roadmap, plus baseline restoration.
+**Branch state:** see git log (`feat/outcome-explainability`). **437 passed, 12 failed (all environmental), 78 skipped.**
 
-**READ FIRST, in this order:**
-1. `V6_LAMBDA_DECISION.md` — the V-6 evidence pack, the objective-saturation finding, and the proposed cost grid. **Does not sign off V-6.**
-2. `RL_TRAINING_REPORT.md` **§2–§3** — the rollout collector delivered no reward; the split was contaminated; the predictor was mis-trained and unseeded.
-3. `POLICY_BENCHMARK_REPORT.md` — carries a **retraction banner**. Read **§A** for current numbers and **§A.4** for the H1 result.
-4. `diagnosisReady.md` — the audit: what clinical readiness would actually require.
+## 2026-10-09 (ninth pass) — P3-outcome: explaining the final screening result
+
+Built the explainability layer for the **outcome** (not the policy): why the
+system produced a particular screening result. The policy-side question (which
+question was asked) already had the selection diagnostic, belief trace, and
+`beta_greedy.explain()`.
+
+**Verified outcome path (the plan's central finding, confirmed in source):**
+`run_episode` (`src/env/environment.py:10`) uses the RL policy only for
+*acquisition*; on STOP the outcome is `p_hat = predictor(final_state)`
+(`environment.py:56`), decision `REFER` iff `p_hat >= tau` (`environment.py:62`).
+The reward is a training signal, not an outcome and not a confidence. Two
+frozen predictors: v2 `MaskedPredictor` (MLP, legacy) and v3 `LogisticPredictor`
+(L2 logistic + Platt + exact marginalisation over 2^10 configs, development
+scorer). Also verified: **no recurrent policies, no Stable-Baselines3, no
+curriculum learning exist in this repo** — DQN and PPO are custom MLP
+implementations (`src/policies/{dqn,ppo}.py`).
+
+**Built (all post-hoc; no retraining; environment/reward/τ/seeds/splits untouched):**
+
+| module | what it adds |
+|---|---|
+| `src/explain/attribution.py` | **exact group-Shapley** over questionnaire items under the predictor's own partial-state value function (absent = UNASKED = marginalised, not zeroed). ≤ 2^k evaluations (k ≤ 6 observed items); deterministic; efficiency identity `Σφ = p_hat − v(∅)` asserted |
+| `src/explain/counterfactual.py` | `find_counterfactual` **preserved unchanged**; new `find_counterfactual_rich`: verified single flips, prior-plausibility feasibility, minimal multi-flip sets, unask, ask-more |
+| `src/explain/uncertainty.py` | v3 **prior-sensitivity band** (Dirichlet-multinomial resampling of the item prior at the training sample size). Reported *unavailable* for v2 — not fabricated |
+| `src/explain/limitations.py` | centralised limitation statements + mandatory non-diagnostic disclaimer |
+| `src/explain/outcome.py` | `explain_outcome()` → schema `outcome-explanation/1.0`; compares decisions semantically across the repo's two vocabularies (`REFER` in the environment, `REFERRAL_RECOMMENDED` in the demo) |
+| `src/explain/render.py` | deterministic text rendering from evidence fields only |
+| `src/models/logistic_predictor.py` | pure `probability_with_prior()` (prediction behaviour unchanged) |
+| `scripts/step17_outcome_explainability.py` | `results/outcome_explainability_saudi.json` + faithfulness metrics |
+
+**Measured (Saudi test, B=6, greedy, v3, 127 episodes — `results/outcome_explainability_saudi.json`):** additivity max error **1.11e-16**; counterfactual found 0.346 / robust 0.654; deletion AUC guided 0.1413 vs random 0.1274; insertion AUC 1.2799 vs 1.1832; **rank stability under one extra observation is low (Spearman mean 0.164)** — reported as measured, not smoothed; overhead 20.1 ms/episode. None of these is a clinical claim.
+
+**Honesty debts closed** (from the open-items table): item 8 — the trace
+sequential-consistency assertion is restored (`tests/test_trace_belief_update.py`
+now independently replays states and asserts `belief_after[i] ==
+belief_before[i+1]` and final consistency with `p_hat`); item 9 —
+`src/explain/shap_baseline.py` now documents that it is **not SHAP**
+(single-flip delta, non-additive), retained only for artifact compatibility,
+with `tests/test_shap_baseline_honesty.py` locking the disclosure.
+
+**Baseline restoration on this machine (verified, all deterministic):** ran
+step2, step3-adjacent artifacts via step12, step9, step4, step5, step13, step15,
+step16. Suite moved from **18 failed / 335 passed / 134 skipped** to **12 failed
+/ 437 passed / 78 skipped**. The 12 remaining failures are all environmental or
+pre-existing — **not regressions**:
+* 6 × "frozen v2 artifact hash" tests — regenerated v2 bytes differ from the
+  pinned hashes recorded on the authors' machine. Verified deterministic here
+  (`b47b52c7…`/`8c8c5ed6…` across repeated runs; documented value
+  `0.009122572011964558` vs this machine's `0.008569736301893147`). The pins
+  belong to the environment that produced them; do not "fix" the test.
+* 1 × `test_first_evaluation_results_are_retained_not_deleted` — the retained
+  step-14 artifact never existed on this machine, and step14 now refuses to
+  regenerate it by design: the retained run predates `random_fixed`, so it
+  fails the current mandatory-baseline gate (`assert_all_baselines`). Obtain the
+  artifact from the team or accept the failure.
+* 1 × `test_v2_no_claim_rule` — **pre-existing doc violation on main**:
+  non-novelty uses of "first"/"only" in `V6_LAMBDA_DECISION.md` and
+  `POLICY_BENCHMARK_REPORT.md` (e.g. the "first 50 → final 50" table header).
+  Left untouched deliberately; fixing it is a docs decision, not a code one.
+* 3 × `test_v4_v7_validation` — need the gitignored
+  `data/QCHAT_dataset2 mendeley.sav`, absent locally.
+
+**Tests:** +41 new (attribution 8, counterfactual 10, explanation object 13,
+shap-honesty 3, step17 7). All new tests pass; the 57 demo/frontend tests pass
+unchanged. The demo now shows a "Why this result?" panel driven only by backend
+fields (frontend rule preserved), and the terminal demo prints the rendered
+explanation at STEP 6b.
+
+**Manual verification performed:** browser demo driven end-to-end over HTTP
+(interactive + auto): explanation present, JSON round-trips, v2 correctly
+reports "no per-session interval available"; terminal demo smoke-tested.
+
+**Known gaps carried forward:** the Step-17 artifact reports the v3 scorer
+only; v2 group attribution is implemented and unit-tested but not batch-run;
+an LLM verbaliser remains deferred (would need field-grounding tests).
 
 ## 2026-10-01 (sixth pass) — P1-f: a Beta-prior / EVOI arm; P1-g: saturation promoted to the front page
 

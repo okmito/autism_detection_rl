@@ -220,4 +220,27 @@ def explain_outcome(
         "disclaimer": screening_disclaimer(),
         "warnings": warnings,
     }
-    return explanation
+    return _json_safe(explanation)
+
+
+def _json_safe(obj: Any) -> Any:
+    """Convert numpy scalars/arrays to plain Python types.
+
+    The explanation object is written to JSON artifacts and served by the demo
+    API; numpy scalars (np.float64, np.int64, np.bool_) are not serialisable by
+    the stdlib json module, so the layer that produces the object guarantees
+    its own serialisability instead of pushing that onto every consumer.
+    """
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return [_json_safe(v) for v in obj.tolist()]
+    return obj
