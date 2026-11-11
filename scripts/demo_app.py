@@ -118,11 +118,19 @@ def build_predictor(retrain: bool = False):
 
 
 def make_policy(name: str):
+    """Greedy Information Gain is the default (configs/config.yaml: policy.type).
+    Anything other than an explicitly supported policy must be rejected, not
+    silently treated as greedy."""
+    if name in ("greedy", None):
+        return GreedyIGPolicy(S["train"], N_ITEMS)
     if name == "random":
         # seed=None: each episode draws fresh entropy, so two Random runs differ;
         # greedy remains fully deterministic (argmax over information gain).
         return RandomPolicy(seed=None)
-    return GreedyIGPolicy(S["train"], N_ITEMS)
+    if name == "beta_greedy":
+        from src.policies.beta_greedy import BetaGreedyPolicy
+        return BetaGreedyPolicy(S["train"], N_ITEMS)
+    raise ValueError(f"unsupported policy {name!r}: supported = greedy (default), random, beta_greedy")
 
 
 def item_payload(j: int) -> dict:
@@ -541,8 +549,8 @@ class Session:
 
 def api_start(req: dict) -> dict:
     mode = req.get("mode", "interactive")
-    pol = req.get("policy", "greedy")
-    if mode not in ("interactive", "auto") or pol not in ("greedy", "random"):
+    pol = req.get("policy") or "greedy"
+    if mode not in ("interactive", "auto") or pol not in ("greedy", "random", "beta_greedy"):
         raise ValueError("mode must be interactive|auto; policy must be greedy|random")
     sid = uuid.uuid4().hex[:12]
     s = Session(mode, pol)

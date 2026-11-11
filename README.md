@@ -31,7 +31,9 @@ Note: a venv created on Linux (e.g. under WSL) cannot be run from Windows cmd an
 # Windows:  .venv-win\Scripts\python -m pytest tests -q
 # Linux:    .venv/bin/python -m pytest tests -q
 ```
-Expected on this machine: **558 passed, 12 failed (all environmental — see "Tests — §21"), 78 skipped**. Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+Expected on this machine: **486 passed, 15 failed, 184 skipped** (latest verified full-suite run). Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+
+> The 15 failures are the previously observed environmental failures (missing gitignored Polish `.sav`/CSV, frozen artifact-hash pins recorded on another machine, and 1 doc-rule failure — see §21) — **not** a claim the repository has zero failures, and not regressions introduced by the V2 changes.
 
 > **Test-count history.** The figure has been wrong in this file three times, in both
 > directions, so it is worth knowing how to check it rather than trusting it.
@@ -81,9 +83,33 @@ Scripts automatically use the real CSVs when present under `data/raw/` (every ar
 > Budgets: Step 4/5/6/7/8 default to `--budget 6`. Step 6 sweeps all eight budgets
 > (1,2,3,4,5,6,8,10) and takes noticeably longer than the others.
 
-### 4. Run the live demo
+### 4. Run the NeuroBridge integrated app (recommended)
 
-**Browser demo (recommended):**
+The repository now includes an integrated **NeuroBridge** web application (research prototype) that brings together guided adaptive screening, contextual observations, observation-grounded support planning, timeline, an RL Intelligence Lab, explainable AI views, and a research/analytics dashboard — built on top of the existing `src/` research modules and `results/` artifacts.
+
+```bat
+:: Windows (from repo root)
+.venv-win\Scripts\python.exe -m pip install -r requirements.txt
+.venv-win\Scripts\python.exe -m app.server
+:: open http://127.0.0.1:8010
+```
+
+**Linux / WSL / macOS:**
+```bash
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m app.server
+# open http://127.0.0.1:8010
+```
+
+- **Port:** default `8010`. Override with `PORT` (e.g. `set PORT=8080` on Windows / `PORT=8080` on Unix).
+- **App data (local):** screening sessions, observations, support strategies, timeline events and consent records are stored in `data/neurobridge.db` by default (override with `NEUROBRIDGE_DB`). This is separate from research datasets/artifacts.
+- **First screening load:** may initialize/load the predictor; the cached demo model `results/demo_model_saudi_seed0_platt_v2.{pt,pkl}` is used when present.
+- **No external services/keys required.** Optional: `NEUROBRIDGE_SECRET` for the app secret.
+- **Important:** NeuroBridge is an explainable, adaptive screening and support **research prototype**. It provides screening/referral-research estimates and non-diagnostic support ideas only — it does **not** confirm or rule out autism and is not a substitute for professional assessment. Research metrics shown are from available offline artifacts and carry documented limitations (e.g. questionnaire-derived/circular labels, open verification gates, blocked/incompatible external validation where indicated).
+
+### 4b. Run the legacy research demo
+
+**Browser demo (research demo):**
 ```bat
 :: Windows
 .venv-win\Scripts\activate
@@ -247,6 +273,13 @@ records = load_dataset("nz", synthetic=True)
 
 ## Repository layout — §8
 ```
+app/                            # NeuroBridge integrated web app (Flask + SQLite + static frontend)
+  server.py                     # API server and app entrypoint
+  db.py, config.py              # persistence/config
+  services/screening.py         # screening sessions (policy + predictor + explainability), persisted
+  services/research.py          # reads real results/ artifacts for dashboard
+  services/rl_lab.py            # synthetic replay/comparison using real policies where available
+  static/index.html, css/, js/  # modular UI (overview, screening, context, support, timeline, RL lab, explainable AI, research, privacy)
 src/data/ingest.py, schema.py, dedupe.py, splits.py, provenance.py, qchat10_contract.py
 src/audits/circularity.py, leakage.py
 src/env/state.py, environment.py, costs.py
@@ -259,7 +292,7 @@ src/eval/metrics.py, bootstrap.py, power.py, fwer.py, subgroup.py, gates.py, ext
 src/ablation/runner.py
 configs/config.yaml (Hydra)
 scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py, scripts/step5_policy_benchmark.py, scripts/step6_lambda_sweep.py, scripts/step7_rl_diagnosis.py, scripts/step8_evoi_scale_analysis.py, scripts/step9_v4_v7_gates.py, scripts/step10_external_validation.py, scripts/step17_outcome_explainability.py
-scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (browser demo)
+scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (legacy browser demo)
 docs/prisma/screening_worksheet.csv
 tests/ (558 passed, 12 environmental failures, 78 skipped)
 ```

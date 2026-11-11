@@ -7,3 +7,4 @@ mlflow>=2.0
 shap>=0.44
 pytest>=7.0
 scipy>=1.10
+flask>=3.0

@@ -56,7 +56,9 @@ _TOL = 1e-12
 
 def _model_block(predictor) -> Dict[str, Any]:
     meta = getattr(predictor, "metadata", {}) or {}
-    if hasattr(predictor, "probability_with_prior"):
+    if hasattr(predictor, "predictive_uncertainty"):
+        method = "bayesian_laplace_partial_state"
+    elif hasattr(predictor, "probability_with_prior"):
         method = "exact_marginalisation_factorised_prior"
     else:
         method = "masked_mlp_partial_state"

@@ -17,7 +17,21 @@ predictor:
   freeze: true
 
 policy:
-  type: dqn
+  type: greedy
+  # Single source of truth for the default execution path (V2 consolidation).
+  # Greedy Information Gain is the primary policy: best matched-budget Brier
+  # (0.0750 at B=6 on val; 10-seed benchmark).
+  # Alternatives stay available where the application supports selection:
+  #   beta_greedy  (experimental alternative/research baseline)
+  #   irt_cat      (research comparison only; Brier 0.0835 val at B=6)
+  #   hybrid_irt_evoi (removed from the default path: 950/950 action-identical
+  #                    to EVOI-only, and its stopping rule underperforms
+  #                    budget use; kept for reproducibility only)
+  #   dqn / ppo    (RL research baselines; not served by the demo)
+  # Stopping: adaptive stopping is DISABLED in the default workflow.
+  # Sessions run to the environment question budget (6); ending early is a
+  # manual action, not a policy decision. Bayesian predictive SD is retained
+  # for experimental reporting only and never gates stopping.
 
 eval:
   seeds: 10
