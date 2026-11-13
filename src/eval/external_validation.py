@@ -144,9 +144,17 @@ def preflight(frozen: "FrozenPredictor", cohort_n_items: int,
 
 
 def load_frozen_predictor(cache_pt: Path, cache_pk: Path,
-                          manifest: Dict[str, Any]) -> FrozenPredictor:
-    """Load a trained predictor and its calibrator as a frozen artefact."""
-    import torch
+                          manifest: Dict[str, Any], *,
+                          weights_sha256: Optional[str] = None,
+                          calibrator_sha256: Optional[str] = None) -> FrozenPredictor:
+    """Load a trained predictor and its calibrator as a frozen artefact.
+
+    When ``weights_sha256`` / ``calibrator_sha256`` are given, each file is verified against it *before* it is
+    deserialised (``pickle.load`` executes code). A mismatch blocks the load. They are keyword arguments and not
+    manifest keys on purpose: the manifest is recorded in frozen outputs and must not change.
+    """
+    import torch  # noqa: F401  (kept: the torch import error should surface here, not mid-load)
+    from src.models.artifact_integrity import ArtifactIntegrityError, load_state_dict, verify_sha256
     from src.models.masked_predictor import MaskedPredictor
 
     cache_pt, cache_pk = Path(cache_pt), Path(cache_pk)
@@ -160,6 +168,14 @@ def load_frozen_predictor(cache_pt: Path, cache_pk: Path,
             f"artefact and is never fitted on the external cohort; regenerate "
             f"it on the development split via Step 2.")
 
+    try:
+        if weights_sha256 is not None:
+            verify_sha256(cache_pt, weights_sha256, "frozen predictor weights")
+        if calibrator_sha256 is not None:
+            verify_sha256(cache_pk, calibrator_sha256, "frozen calibrator")
+    except ArtifactIntegrityError as exc:
+        raise ExternalValidationBlocked(f"SHA-256 verification failed: {exc}") from exc
+
     hidden = tuple(manifest.get("hidden", (128, 64)))
     n_items = int(manifest["n_items"])
     m_list = manifest.get("m_list")
@@ -167,7 +183,7 @@ def load_frozen_predictor(cache_pt: Path, cache_pk: Path,
     pred = MaskedPredictor(n_items=n_items, hidden=list(hidden),
                            calibration=calibration,
                            seed=int(manifest.get("seed", 0)), m_list=m_list)
-    pred.model.load_state_dict(torch.load(cache_pt, map_location="cpu"))
+    pred.model.load_state_dict(load_state_dict(cache_pt))
     with open(cache_pk, "rb") as fh:
         pred.calibrator = pickle.load(fh)
     return FrozenPredictor(pred, manifest)

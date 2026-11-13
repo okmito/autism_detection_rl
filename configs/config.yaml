@@ -1,5 +1,11 @@
+# How this file is used (audit finding T4): app/config.py reads env.question_budget, eval.operating_threshold
+# and policy.type with yaml.safe_load (tests/test_app_config.py pins them to the demo constants). The research
+# scripts under scripts/ do NOT parse this file; their settings are literals, and values below that the code
+# does not follow are annotated where they differ.
 dataset:
   tier: T1
+  # NOTE: not what the code runs. The NZ 1,054-row file is absent, so src/data/ingest.py raises for "nz";
+  # every shipped path (app, demo, steps 2-17) uses the Saudi Q-CHAT-10 data ("saudi").
   name: nz
 
 env:
@@ -13,6 +19,8 @@ reward:
 
 predictor:
   hidden: [128, 64]
+  # NOTE: the offline research artifacts (steps 2/3) use isotonic, but the web app and demos serve a Platt-
+  # calibrated predictor (app/config.py DEMO_CALIBRATION = "platt"). Both are intentional and documented.
   calibration: isotonic
   freeze: true
 
@@ -28,7 +36,14 @@ policy:
   #                    to EVOI-only, and its stopping rule underperforms
   #                    budget use; kept for reproducibility only)
   #   dqn / ppo    (RL research baselines; not served by the demo)
-  # Stopping: adaptive stopping is DISABLED in the default workflow.
+  #   rl_adaptive  (trained RL agent, 2026-11-13): chooses ASK(item)/STOP from the answers so far;
+  #                learned STOP from 2 questions on, safety cap 10. Served from
+  #                results/rl_adaptive/served_policy.json (scripts/step18-20) and only when that artifact records a
+  #                passed integration gate; otherwise a request for it falls back to greedy and the session is
+  #                labelled as a fallback. Selectable in the app; NOT the default until the supervisor ratifies the
+  #                non-inferiority margin and the Polish cohort's role (RL_ADAPTIVE_REPORT.md section 12).
+  #                To make it the default: type: rl_adaptive
+  # Stopping: adaptive stopping is DISABLED in the default (greedy) workflow; rl_adaptive sessions stop by policy.
   # Sessions run to the environment question budget (6); ending early is a
   # manual action, not a policy decision. Bayesian predictive SD is retained
   # for experimental reporting only and never gates stopping.

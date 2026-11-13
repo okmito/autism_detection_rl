@@ -390,7 +390,9 @@ def main() -> int:
     try:
         predictor = load_frozen_predictor(
             REPO / str(metrics_artifact["artifact_weights"]),
-            REPO / str(metrics_artifact["artifact_calibrator"]), manifest)
+            REPO / str(metrics_artifact["artifact_calibrator"]), manifest,
+            weights_sha256=metrics_artifact.get("artifact_weights_sha256"),
+            calibrator_sha256=metrics_artifact.get("artifact_calibrator_sha256"))
         assert_no_fitting(predictor)
         if not isinstance(predictor, FrozenPredictor):
             raise ExternalValidationBlocked("predictor is not frozen")

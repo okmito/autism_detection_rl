@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pickle
 import sys
 import threading
 import uuid
@@ -28,21 +27,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-os.chdir(REPO)
+sys.path.insert(0, str(REPO))  # entry-point script; no os.chdir - data paths are anchored to the repo root (T5)
 
 import numpy as np
-import torch
 from src.data.splits import stratified_split
 
-from src.data.ingest import load_dataset
 from src.audits.circularity import audit_circularity
-from src.env.state import init_state, update_state, get_legal_items
-from src.env.environment import STOP, run_episode
-from src.models.masked_predictor import MaskedPredictor
-from src.policies.greedy import GreedyIGPolicy, entropy
+from src.policies.greedy import GreedyIGPolicy
 from src.policies.random_policy import RandomPolicy
-from src.explain.counterfactual import find_counterfactual
 
 BUDGET, TAU, SEED, N_ITEMS = 6, 0.5, 0, 10
 # Demo uses Platt calibration on logits: keeps posteriors continuous instead of
@@ -52,27 +44,48 @@ BUDGET, TAU, SEED, N_ITEMS = 6, 0.5, 0, 10
 # The offline research artifacts (Step 2/3) still use isotonic per configs/config.yaml.
 DEMO_CALIBRATION = "platt"
 STATIC = Path(__file__).resolve().parent / "demo_static"
-# The cache filename encodes the predictor version. It previously did not, so a
-# change to MaskedPredictor's training or calibration semantics left a stale v1
-# cache on disk and the demo silently kept serving the old weights.
-CACHE_STEM = (f"demo_model_saudi_seed{SEED}_{DEMO_CALIBRATION}"
-              f"_v{MaskedPredictor.VERSION}")
-CACHE_PT = REPO / "results" / f"{CACHE_STEM}.pt"
-CACHE_PKL = REPO / "results" / f"{CACHE_STEM}.pkl"
+# Cache location, key (dataset fingerprint) and hash verification: src/screening/model_cache.py.
 
 # The wording is derived from the verified Q-CHAT-10 feature contract
 # (src/data/qchat10_contract.py) rather than restated here. A hand-written copy
 # previously drifted: from A3 onward the demo showed one construct while the
 # answer was recorded as the feature for a different one. tests/test_support_
 # questionnaire.py asserts this list equals the contract's items.
-from src.support.questionnaire import ITEMS as _QCHAT_ITEMS
+from src.screening import model_cache, session as engine
+# selection_diagnostic and DEGENERACY_TOL are re-exported: existing tests and callers use demo_app.<name>.
+from src.screening.diagnostics import (DEGENERACY_TOL, ITEMS, item_payload,  # noqa: F401
+                                       selection_diagnostic)  # noqa: F401
 
-ITEMS = [item.question_text for item in _QCHAT_ITEMS]
 assert len(ITEMS) == N_ITEMS, "questionnaire contract must supply exactly 10 items"
 
 _LOCK = threading.Lock()
 S: dict = {"predictor": None, "train": None, "test": None, "records": None,
            "counter": 0, "sessions": {}}
+
+# The demo server keeps sessions in memory for its whole lifetime, so without a cap a long-running (or
+# scripted) demo grows without bound. Finished sessions are dropped before unfinished ones.
+MAX_SESSIONS = 200
+_SESSIONS_LOCK = threading.Lock()
+
+
+def next_record_index(n: int) -> int:
+    """Cycle through the held-out records; the counter is advanced under a lock (the server is threaded)."""
+    with _SESSIONS_LOCK:
+        i = S["counter"] % n
+        S["counter"] += 1
+    return i
+
+
+def register_session(sid: str, session) -> None:
+    """Store a session, evicting the oldest finished (else the oldest) ones beyond ``MAX_SESSIONS``."""
+    with _SESSIONS_LOCK:
+        sessions = S["sessions"]
+        sessions[sid] = session
+        while len(sessions) > MAX_SESSIONS:
+            victim = next((k for k, v in sessions.items() if k != sid and getattr(v, "finished", False)), None)
+            if victim is None:
+                victim = next(k for k in sessions if k != sid)
+            del sessions[victim]
 
 
 def predict(state: dict) -> float:
@@ -91,30 +104,10 @@ def split(records):
 
 
 def build_predictor(retrain: bool = False):
-    records = load_dataset("saudi")
-    train, val, test = split(records)
-    pred = MaskedPredictor(n_items=N_ITEMS, hidden=[128, 64], calibration=DEMO_CALIBRATION, seed=SEED)
-    if not retrain and CACHE_PT.exists() and CACHE_PKL.exists():
-        try:
-            pred.model.load_state_dict(torch.load(CACHE_PT, map_location="cpu"))
-            with open(CACHE_PKL, "rb") as f:
-                pred.calibrator = pickle.load(f)
-            print(f"model: loaded cached weights ({CACHE_PT.name})")
-            return records, train, val, test, pred
-        except Exception as e:  # fall through to retraining
-            print(f"cache load failed ({e}); retraining")
-    print(f"model: training MaskedMLP[128,64] + {DEMO_CALIBRATION} on Saudi 506 ... (~20 s)")
-    pred.fit(train, epochs=20, lr=1e-3, batch_size=32, seed=SEED)
-    pred.fit_calibrator(val, method=DEMO_CALIBRATION)
-    try:
-        CACHE_PT.parent.mkdir(exist_ok=True)
-        torch.save(pred.model.state_dict(), CACHE_PT)
-        with open(CACHE_PKL, "wb") as f:
-            pickle.dump(pred.calibrator, f)
-        print("model: cached for instant startup (delete results/demo_model_* to retrain)")
-    except Exception as e:
-        print(f"model: caching skipped ({e})")
-    return records, train, val, test, pred
+    """Load or train the demo predictor through the shared, hash-verified cache (src/screening/model_cache.py)."""
+    return model_cache.build_predictor(
+        REPO / "results", seed=SEED, n_items=N_ITEMS, calibration=DEMO_CALIBRATION, retrain=retrain,
+        info=lambda m: print(f"model: {m}"), warn=lambda m: print(f"model: {m}"))
 
 
 def make_policy(name: str):
@@ -133,103 +126,9 @@ def make_policy(name: str):
     raise ValueError(f"unsupported policy {name!r}: supported = greedy (default), random, beta_greedy")
 
 
-def item_payload(j: int) -> dict:
-    return {"index": int(j), "code": f"A{j + 1}", "text": ITEMS[int(j)]}
-
-
-# --------------------------------------------------------------------------
-# selection diagnostic
-# --------------------------------------------------------------------------
-# Why this exists
-# ---------------
-# The demo asks a viewer to watch which question the policy picks next. On this
-# dataset it very often picks the lowest-numbered unasked item in order, and
-# without an explanation that reads as a broken policy.
-#
-# It is not a bug, and this is the measured reason. ``GreedyIGPolicy`` selects on
-# ``IG = H(Y|s) - E_v[H(Y|s,j,v)]`` over the *raw* empirical support mean. Once
-# the support is **pure** — every training record consistent with the answers so
-# far carries the same label — ``H(Y|s) = 0`` and every child support is pure too,
-# so **every legal item's IG is exactly 0**. ``argmax`` then returns the first
-# maximum, which is ``greedy.py``'s ``best_j = items_only[0]`` initialisation.
-# The criterion is vacuous, not tied.
-#
-# Measured on the held-out test split at B=6: the support is already pure at
-# 61.3% of decision states, and the criterion is identically zero at 195 of 195
-# pure-support states (`POLICY_BENCHMARK_REPORT.md` §A.6, `diagnosisReady.md`
-# §0A.1). A Beta(1,1)-smoothed posterior fixes the degeneracy
-# (`src/policies/beta_greedy.py`) but the demo deliberately still runs the
-# shipped greedy policy, so the UI reports the degeneracy rather than hiding it.
-#
-# ``GreedyIGPolicy`` is intentionally NOT modified, so this recomputes its
-# formula rather than calling into it. ``tests/test_demo_behavior_audit.py::
-# test_selection_diagnostic_agrees_with_policy_choice`` asserts the two agree,
-# which is what keeps this from drifting away from the real policy.
-DEGENERACY_TOL = 1e-12
-
-
-def selection_diagnostic(policy, state, legal) -> dict:
-    """Explain the item choice at ``state``: support size, purity, IG spread."""
-    items_only = [a for a in legal if a != STOP]
-    out = {
-        "applicable": hasattr(policy, "_support"),
-        "n_legal": len(items_only),
-        "support_size": None, "n_pos": None, "posterior": None,
-        "support_is_pure": None, "ig_spread": None, "criterion_vacuous": None,
-        "tie_at_max": None, "top_items": [],
-    }
-    if not out["applicable"] or not items_only:
-        out["criterion_vacuous"] = None
-        return out
-
-    idx = policy._support(state["mask"], state["value"])
-    out["support_size"] = int(len(idx))
-    if len(idx) == 0:
-        out["criterion_vacuous"] = True
-        return out
-
-    ys = policy.y[idx]
-    total = len(idx)
-    n_pos = int(ys.sum())
-    p_s = float(ys.mean())
-    h_s = entropy(p_s)
-    out["n_pos"] = n_pos
-    out["posterior"] = p_s
-    out["support_is_pure"] = bool(n_pos in (0, total))
-
-    ig: dict[int, float] = {}
-    for j in items_only:
-        sub = idx[~policy.missing_mask[idx, j]]
-        if len(sub) == 0:
-            continue
-        exp_h = 0.0
-        vals, counts = np.unique(policy.X[sub, j], return_counts=True)
-        for v, c in zip(vals, counts):
-            child = idx[(~policy.missing_mask[idx, j]) & (policy.X[idx, j] == v)]
-            if len(child) == 0:
-                continue
-            exp_h += (c / total) * entropy(float(policy.y[child].mean()))
-        n_miss = int(np.sum(policy.missing_mask[idx, j]))
-        if n_miss > 0:
-            child = idx[policy.missing_mask[idx, j]]
-            p_child = float(policy.y[child].mean()) if len(child) > 0 else 0.5
-            exp_h += (n_miss / total) * entropy(p_child)
-        ig[j] = h_s - exp_h
-
-    if not ig:
-        out["criterion_vacuous"] = True
-        return out
-
-    best = max(ig.values())
-    worst = min(ig.values())
-    out["ig_spread"] = best - worst
-    # A spread of zero means every scored item is indistinguishable, so argmax
-    # carries no information and the lowest legal index wins by default.
-    out["criterion_vacuous"] = bool((best - worst) <= DEGENERACY_TOL)
-    tied = sorted(j for j, v in ig.items() if best - v <= DEGENERACY_TOL)
-    out["tie_at_max"] = len(tied)
-    out["top_items"] = [{"code": f"A{j + 1}", "ig": ig[j]} for j in tied[:6]]
-    return out
+# item_payload / selection_diagnostic / DEGENERACY_TOL (and the long explanation of why the diagnostic exists)
+# live in src/screening/diagnostics.py, shared with the web app. They are imported at the top of this file
+# so ``demo_app.selection_diagnostic`` and ``demo_app.item_payload`` keep working for existing callers.
 
 
 def read_offline() -> dict:
@@ -338,37 +237,39 @@ def meta() -> dict:
 
 
 class Session:
+    """An in-memory demo session. The step/finish logic is ``src.screening.session`` (shared with the
+    web app); this class only owns the state and binds it to a held-out dataset record."""
+
     def __init__(self, mode: str, policy_name: str):
         test = S["test"]
-        i = S["counter"] % len(test)
-        S["counter"] += 1
+        i = next_record_index(len(test))
         self.record = test[i]
         self.policy = make_policy(policy_name)
         self.policy_name = policy_name
-        self.state = init_state(self.record)
-        self.state["questions_remaining"] = BUDGET
-        self.state["budget"] = BUDGET
+        self.state = engine.record_state(self.record, BUDGET)
         self.asked = 0
         self.items_asked: list[int] = []
         self.trace: list[dict] = []
         self.pending: int | None = None
         self.finished = False
-        # P4: the finished session is the input to the support layer. Both are
-        # kept so the support report can be assembled without re-running
-        # anything (read-only with respect to the screening outcome).
+        # P4: the finished session is the input to the support layer. Both are kept so the support
+        # report can be assembled without re-running anything (read-only with respect to the outcome).
         self.result_id = f"demo-{uuid.uuid4().hex[:8]}"
         self.episode_result: dict | None = None
         self.explanation: dict | None = None
+        self._support_report: dict | None = None
 
-    def _legal(self) -> list[int]:
-        return get_legal_items(self.state)
+    @staticmethod
+    def _ctx() -> engine.Context:
+        return engine.Context(
+            predict=predict, predictor=S["predictor"], train=S["train"] or [], records=S["records"] or [],
+            n_items=N_ITEMS, budget=BUDGET, tau=TAU,
+            tag="demo — research prototype, not a diagnostic device", input_reference="demo-session")
 
     def first_question(self) -> dict:
-        j = self.policy(self.state, self._legal())
-        self.pending = int(j)
-        return {"question": item_payload(j), "belief": predict(self.state), "asked": 0,
-                "selection": selection_diagnostic(self.policy, self.state,
-                                                  self._legal() + [STOP])}
+        j, sel = engine.next_question(self._ctx(), self.policy, self.state)
+        self.pending = j
+        return {"question": item_payload(j), "belief": predict(self.state), "asked": 0, "selection": sel}
 
     def answer(self, value: int | None = None, stop: bool = False) -> dict:
         if self.finished:
@@ -381,170 +282,50 @@ class Session:
             raise ValueError("value must be 0 or 1")
         if self.pending is None:
             raise ValueError("no pending question")
+        ctx = self._ctx()
         j = self.pending
-        p_before = predict(self.state)
-        qr = self.state["questions_remaining"] - 1
-        # Diagnose the choice that was just made, evaluated at the state it was
-        # made from, so the trace explains each pick rather than the next one.
-        sel = selection_diagnostic(self.policy, self.state, self._legal() + [STOP])
-        self.state = update_state(self.state, j, int(value), qr)
-        self.state["questions_remaining"] = qr
-        self.state["budget"] = BUDGET
+        self.state, step = engine.apply_answer(ctx, self.policy, self.state, j, int(value), self.asked)
         self.asked += 1
         self.items_asked.append(j)
-        p_after = predict(self.state)
-        step = {"step": self.asked, "item": f"A{j + 1}", "value": int(value),
-                "belief_before": p_before, "belief_after": p_after,
-                "selection": sel}
         self.trace.append(step)
-        if self.asked >= BUDGET or not self._legal():
+        if engine.is_exhausted(ctx, self.state, self.asked):
             return {"finished": True, "result": self._finish("budget_exhausted")}
-        nj = int(self.policy(self.state, self._legal()))
-        self.pending = nj
-        return {"finished": False, "belief_before": p_before, "belief_after": p_after,
-                "trace_step": step, "asked": self.asked, "next": item_payload(nj),
-                "selection": selection_diagnostic(self.policy, self.state,
-                                                  self._legal() + [STOP])}
+        self.pending, next_sel = engine.next_question(ctx, self.policy, self.state)
+        return {"finished": False, "belief_before": step["belief_before"], "belief_after": step["belief_after"],
+                "trace_step": step, "asked": self.asked, "next": item_payload(self.pending), "selection": next_sel}
 
-    def _selection_summary(self) -> dict:
-        """Aggregate the per-step diagnostics into one honest headline number."""
-        steps = [t.get("selection") or {} for t in self.trace]
-        scored = [s for s in steps if s.get("ig_spread") is not None]
-        vacuous = [s for s in scored if s.get("criterion_vacuous")]
-        pure = [s for s in steps if s.get("support_is_pure") is True]
-        return {
-            "steps_diagnosed": len(scored),
-            "steps_criterion_vacuous": len(vacuous),
-            "steps_support_pure": len(pure),
-            "support_pure_at_stop": (pure[-1]["support_is_pure"]
-                                     if pure else None),
-            "support_size_at_stop": (steps[-1].get("support_size")
-                                     if steps else None),
-        }
-
-    def _explain(self, ep_result: dict) -> dict:
-        """Outcome explanation for this session's result (P3-outcome).
-
-        Uses the same frozen demo predictor that produced the estimate. The v2
-        neural predictor carries no item prior, so counterfactual feasibility
-        and the sensitivity band are reported as unavailable rather than
-        guessed — exactly as the schema requires.
-        """
-        from src.explain.outcome import explain_outcome
-
-        records = S["records"] or []
-        audit = audit_circularity(records) if records else {}
-        X_train = np.array([np.asarray(r["item_responses"], dtype=float)
-                            for r in (S["train"] or [])])
-        return explain_outcome(
-            ep_result, S["predictor"], tau=TAU,
-            costs=np.ones(N_ITEMS, dtype=float),
-            prior=None,
-            reference_rows=X_train if len(X_train) else None,
-            dataset_tag="saudi",
-            circularity=audit.get("classification"),
-            label_source=self.record.get("label_source"),
-            budget=BUDGET,
-            tag="demo — research prototype, not a diagnostic device",
-        )
+    def _adopt(self, out: dict) -> dict:
+        self.finished = True
+        self.episode_result = out["episode_result"]
+        self.explanation = out["explanation"]
+        self._support_report = out["support_report"]
+        return out["result"]
 
     def _finish(self, reason: str) -> dict:
-        p = predict(self.state)
-        decision = "REFERRAL_RECOMMENDED" if p >= TAU else "NO_REFERRAL_INDICATED"
-        cf = find_counterfactual(self.state, p, predict, tau=TAU)
-        self.finished = True
-        # Retained for the support layer (P4). The demo keeps its own decision
-        # vocabulary; src/explain/outcome.py normalises both spellings.
-        self.episode_result = {
-            "p_hat": p, "decision": decision, "trace": self.trace,
-            "items_asked": list(self.items_asked),
-            "stop_reason": reason, "final_state": self.state}
-        self.explanation = self._explain(self.episode_result)
-        return {"p_hat": p, "decision": decision, "asked": self.asked,
-                "items_asked": [f"A{j + 1}" for j in self.items_asked],
-                "trace": self.trace, "counterfactual": cf,
-                "true_label": int(self.record["label"]), "stop_reason": reason,
-                "selection_summary": self._selection_summary(),
-                "explanation": self.explanation,
-                "support_report": self.support_report()}
+        return self._adopt(engine.finalize(
+            self._ctx(), state=self.state, trace=self.trace, items_asked=self.items_asked, stop_reason=reason,
+            result_id=self.result_id, label_source=self.record.get("label_source"), true_label=self.record["label"]))
 
     def run_auto(self) -> dict:
-        ep = run_episode(self.record, BUDGET, 0, self.policy, predict, 0.0, tau=TAU)
-        cf = find_counterfactual(ep["final_state"], ep["p_hat"], predict, tau=TAU)
-        # run_episode keeps its own trace and its own item list; adopt the item
-        # list so the diagnostic replay below walks the same sequence.
-        self.items_asked = [int(a) for a in ep["items_asked"]]
-        # run_episode keeps its own trace, so attach the per-step diagnostic here
-        # rather than changing the environment (which the RL trainers share).
-        for st, t in enumerate(self._replayed_trace()):
-            if st < len(ep["trace"]):
-                ep["trace"][st]["selection"] = t.get("selection")
-        self.trace = ep["trace"]
-        self.finished = True
-        self.episode_result = ep
-        self.explanation = self._explain(ep)
-        return {"p_hat": float(ep["p_hat"]),
-                "decision": "REFERRAL_RECOMMENDED" if ep["p_hat"] >= TAU else "NO_REFERRAL_INDICATED",
-                "asked": len(ep["items_asked"]),
-                "items_asked": [f"A{j + 1}" for j in ep["items_asked"]],
-                "trace": ep["trace"], "counterfactual": cf,
-                "true_label": int(self.record["label"]), "stop_reason": ep["stop_reason"],
-                "selection_summary": self._selection_summary(),
-                "explanation": self.explanation,
-                "support_report": self.support_report()}
-
-    def _replayed_trace(self) -> list[dict]:
-        """Re-walk the realised item sequence, diagnosing each decision point.
-
-        Read-only with respect to ``self.state``, so it can run after
-        ``run_episode`` has finished without disturbing the episode.
-        """
-        if not self.policy_name_is_greedy():
-            return []
-        state = init_state(self.record)
-        state["questions_remaining"] = BUDGET
-        state["budget"] = BUDGET
-        out: list[dict] = []
-        for depth, a in enumerate(self.items_asked):
-            legal = get_legal_items(state) + [STOP]
-            sel = selection_diagnostic(self.policy, state, legal)
-            out.append({"step": depth + 1, "item": f"A{a + 1}", "selection": sel})
-            value = self.record["item_responses"][a]
-            if np.isnan(value):
-                break
-            state = update_state(state, a, int(value), BUDGET - depth - 1)
-            state["budget"] = BUDGET
-            state["questions_remaining"] = BUDGET - depth - 1
-        return out
-
-    def policy_name_is_greedy(self) -> bool:
-        return isinstance(self.policy, GreedyIGPolicy)
+        out = engine.run_auto(self._ctx(), self.policy, self.record, result_id=self.result_id)
+        self.items_asked = list(out["episode_result"]["items_asked"])
+        self.trace = out["episode_result"]["trace"]
+        return self._adopt(out)
 
     # ------------------------------------------------------------------
     # P4 — the support report is generated from the answers already given
     # ------------------------------------------------------------------
 
     def support_report(self) -> dict:
-        """Assemble the support report for this finished session.
+        """The support report for this finished session.
 
-        Read-only with respect to the screening outcome: the report is built
-        from this session's own episode result and its own explanation. No
-        second questionnaire is asked anywhere — there is nothing to submit.
+        Read-only with respect to the screening outcome: it was built from this session's own episode
+        result and explanation when the session finished. No second questionnaire is asked anywhere.
         """
-        from src.support.report import build_support_report
-        from src.support.schemas import to_json_safe
-
-        if not self.finished or self.episode_result is None:
+        if not self.finished or self._support_report is None:
             raise ValueError("finish the screening session first — the support "
                              "report follows the result, it never precedes it")
-        report = build_support_report(
-            episode_result=self.episode_result,
-            explanation=self.explanation,
-            result_id=self.result_id,
-            model_name="MaskedPredictor",
-            model_version=str(MaskedPredictor.VERSION),
-            input_reference="demo-session")
-        return to_json_safe(report)
+        return self._support_report
 
 
 def api_start(req: dict) -> dict:
@@ -554,7 +335,7 @@ def api_start(req: dict) -> dict:
         raise ValueError("mode must be interactive|auto; policy must be greedy|random")
     sid = uuid.uuid4().hex[:12]
     s = Session(mode, pol)
-    S["sessions"][sid] = s
+    register_session(sid, s)
     if mode == "auto":
         return {"session_id": sid, "mode": mode, "budget": BUDGET, "tau": TAU,
                 "policy": pol, "result": s.run_auto()}

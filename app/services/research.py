@@ -1,10 +1,13 @@
 from __future__ import annotations
 import csv
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
 from app.config import RESULTS_DIR
+
+log = logging.getLogger("neurobridge.research")
 
 
 def _load_json(name: str):
@@ -13,7 +16,8 @@ def _load_json(name: str):
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        log.warning("research artifact %s is unreadable (%s)", name, type(exc).__name__)
         return None
 
 
@@ -24,7 +28,8 @@ def _load_csv(name: str):
     try:
         with p.open("r", encoding="utf-8", newline="") as f:
             return list(csv.DictReader(f))
-    except Exception:
+    except Exception as exc:
+        log.warning("research table %s is unreadable (%s)", name, type(exc).__name__)
         return None
 
 

@@ -22,6 +22,12 @@
   function fmt(n, d=3){ return (n===null||n===undefined||Number.isNaN(Number(n))) ? '—' : Number(n).toFixed(d); }
   function safeJoin(v, sep=', '){ return Array.isArray(v) ? v.join(sep) : (v==null ? '' : String(v)); }
   function nowDate(){ return new Date().toISOString().slice(0,16); }
+  // Stored timestamps are UTC ISO strings; a datetime-local input needs the user's wall-clock time.
+  function toLocalInput(iso){
+    const d = new Date(iso); if(Number.isNaN(d.getTime())) return '';
+    const p = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
   function showToast(msg){ toast.textContent = msg; toast.classList.add('show'); setTimeout(()=>toast.classList.remove('show'), 2600); }
   function setStatus(msg){ globalStatus.textContent = msg || ''; }
 
@@ -29,7 +35,7 @@
     const res = await fetch(path, { headers: { 'Content-Type': 'application/json', ...(opts.headers||{}) }, ...opts });
     let data = {};
     try { data = await res.json(); } catch(e){}
-    if(!res.ok || data.ok === false) throw new Error(data.error || res.statusText || 'Request failed');
+    if(!res.ok || data.ok === false){ const e = new Error(data.error || res.statusText || 'Request failed'); e.status = res.status; throw e; }
     return data.data !== undefined ? data.data : data;
   }
 
@@ -127,7 +133,7 @@
           <div class="form">
             <div class="field"><label for="polSel">Policy (real implementations)</label>
               <select id="polSel">${(Array.isArray(state.meta&&state.meta.policies_available)?state.meta.policies_available:['greedy','random','beta_greedy']).map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')}</select>
-              <div class="help">Available for live screening: greedy, random, beta_greedy. Learned policies (DQN/PPO) not loaded as live checkpoints here.</div></div>
+              <div class="help">greedy, random, beta_greedy ask a fixed number of questions. rl_adaptive is the trained RL agent: it picks each question from the answers so far and decides when to stop. ${rlAvailabilityText(state.meta&&state.meta.rl_policy)}</div></div>
             <div class="field"><label for="modeSel">Mode</label>
               <select id="modeSel"><option value="interactive">Interactive (answer each question)</option><option value="auto">Auto episode (replay on held-out test record)</option></select></div>
             <div class="row"><button class="btn" id="startSessBtn" type="button">Start new session</button>
@@ -152,9 +158,11 @@
     try{
       const s = await api(`/api/screening/sessions/${id}`);
       if(s.status==='completed'){ renderResult(s.result, s); return; }
+      if(s.status==='expired'){ showToast('That session expired after a long pause. Start a new one.'); if(!silent) renderScreening(); return; }
       // reconstruct minimal client session for interactive step
       state.screening.session = { session_id: s.id, mode: s.mode, policy: s.policy, budget: s.budget, tau: s.tau,
-        question: s.pending_question, belief: s.belief, asked: s.asked_count, selection: null, resumed: true, trace: s.trace||[] };
+        question: s.pending_question, belief: s.belief, asked: s.asked_count, selection: null, resumed: true, trace: s.trace||[],
+        decision: s.decision||null, policy_info: s.policy_info||null };
       await renderScreeningActive(state.screening.session, true);
     }catch(e){ if(!silent) showToast(e.message); }
   }
@@ -170,22 +178,42 @@
     const budget = sess.budget || state.meta?.budget || 6;
     const asked = sess.asked || 0;
     const pct = Math.round((asked/budget)*100);
+    const isRL = sess.policy === 'rl_adaptive';
     area.innerHTML = `
-      <div class="row" style="justify-content:space-between"><div><span class="badge">${esc(sess.policy)}</span> <span class="badge">Session ${esc(sess.session_id)}</span></div><div class="muted tiny">Budget ${asked}/${budget} · τ=${fmt(sess.tau||0.5,2)}</div></div>
+      ${fallbackBanner(sess.policy_info)}
+      <div class="row" style="justify-content:space-between"><div><span class="badge">${esc(sess.policy)}</span> <span class="badge">Session ${esc(sess.session_id)}</span></div><div class="muted tiny">${isRL ? `Questions ${asked} (agent decides when to stop; at most ${budget})` : `Budget ${asked}/${budget}`} · τ=${fmt(sess.tau||0.5,2)}</div></div>
       <div class="progress" style="margin:10px 0"><i style="width:${pct}%"></i></div>
       ${q ? `<div class="card" style="background:var(--bg-soft);box-shadow:none"><div class="muted tiny">Next question (selected by policy)</div><h3 style="margin:6px 0 4px">${esc(q.code)}: ${esc(q.text)}</h3>
         <div class="row" style="margin-top:10px">
           <button class="btn" data-ans="1">Yes / Atypical response</button>
           <button class="btn secondary" data-ans="0">No / Typical response</button>
+          ${isRL ? `<button class="btn ghost" id="skipBtn">Prefer not to answer</button>` : ''}
           <button class="btn ghost" id="stopBtn">Stop & show result</button>
         </div></div>` : `<div class="empty">No pending question.</div>`}
       <div class="grid cols-2" style="margin-top:12px">
         <div><h3>Current estimate</h3><div class="metric card" style="box-shadow:none"><div class="k">Model screening estimate p̂</div><div class="v">${fmt(sess.belief,3)}</div><div class="n">Updates after each observed response. Not a diagnosis.</div></div></div>
-        <div><h3>Why this question?</h3><div class="notice">${selectionText(sess.selection)}</div></div>
+        <div><h3>Why this question?</h3>${sess.decision ? decisionHtml(sess.decision) : `<div class="notice">${selectionText(sess.selection)}</div>`}</div>
       </div>
       <div style="margin-top:12px"><h3>Decision history (trace)</h3>${renderTraceTable(sess.trace||state.screening.session?.trace||[])}</div>`;
-    $$('[data-ans]').forEach(b=>b.onclick=()=>submitAnswer(sess.session_id, Number(b.dataset.ans)));
+    $$('[data-ans]').forEach(b=>b.onclick=()=>submitAnswer(sess.session_id, Number(b.dataset.ans), false, q ? q.index : null));
     const stopBtn = $('#stopBtn'); if(stopBtn) stopBtn.onclick=()=>submitAnswer(sess.session_id, null, true);
+    const skipBtn = $('#skipBtn'); if(skipBtn) skipBtn.onclick=()=>submitAnswer(sess.session_id, null, false, q ? q.index : null, true);
+  }
+
+  function rlAvailabilityText(info){
+    if(!info) return '';
+    if(info.available) return `RL policy loaded (${esc(info.agent)}, trained on ${esc(info.trained_on)}).`;
+    return `RL policy unavailable: ${esc(info.reason||'unknown reason')}. Choosing it falls back to greedy, and the session is labelled as a fallback.`;
+  }
+  function fallbackBanner(info){
+    if(!info || !info.fallback) return '';
+    return `<div class="notice warn" style="margin-bottom:10px"><strong>Fallback in use.</strong> ${esc(info.fallback.requested)} was requested but is unavailable (${esc(info.fallback.reason||'')}); this session uses ${esc(info.fallback.used)}.</div>`;
+  }
+  function decisionHtml(d){
+    const vals = (d.action_values||[]).slice(0,5);
+    return `<div class="notice"><ul style="margin:0;padding-left:18px">${(d.narrative||[]).map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>
+      ${vals.length?`<table style="margin-top:8px"><thead><tr><th>Option</th><th>Agent value</th></tr></thead><tbody>${vals.map(v=>`<tr><td>${esc(v.action)}</td><td>${fmt(v.q,4)}</td></tr>`).join('')}</tbody></table>`:''}
+      <p class="tiny muted">Values are the agent's own estimates (${esc(d.value_units||'')}). ${d.faithful_to_agent_internals ? 'Exact decomposition of the agent\'s value.' : 'Answer probabilities come from the belief model, not the network internals.'}</p>`;
   }
 
   function selectionText(sel){
@@ -195,26 +223,37 @@
     return `Support-consistent records: ${sel.support_size ?? '—'} (positive: ${sel.n_pos ?? '—'}). Support pure: ${sel.support_is_pure}. IG spread: ${fmt(sel.ig_spread,6)}; tied at max: ${sel.tie_at_max ?? '—'}. Top: ${(sel.top_items||[]).map(t=>`${t.code}(${fmt(t.ig,4)})`).join(', ')||'—'}.`;
   }
 
-  async function submitAnswer(sessionId, value, stop=false){
+  let answering = false;
+  function lockAnswerButtons(on){
+    const area = $('#screeningArea'); if(!area) return;
+    area.setAttribute('aria-busy', on ? 'true' : 'false');
+    $$('button', area).forEach(b=>{ b.disabled = on; });
+  }
+  async function submitAnswer(sessionId, value, stop=false, itemIndex=null, skip=false){
+    if(answering) return;   // a double-click must not submit the same answer twice
+    answering = true; lockAnswerButtons(true);
     try{
       setStatus('Updating…');
-      const r = await api('/api/screening/answer',{method:'POST',body:JSON.stringify({session_id:sessionId, value, stop})});
+      const r = await api('/api/screening/answer',{method:'POST',body:JSON.stringify({session_id:sessionId, value, stop, item_index:itemIndex, ...(skip ? {skip:true} : {})})});
       if(r.finished){ renderResult(r.result, {id: sessionId}); showToast('Session completed'); }
       else {
         const prev = state.screening.session || {session_id: sessionId};
-        prev.question = r.next; prev.belief = r.belief_after; prev.asked = r.asked; prev.selection = r.selection;
+        prev.question = r.next; prev.belief = r.belief_after; prev.asked = r.asked; prev.selection = r.selection; prev.decision = r.decision || null;
         prev.trace = [...(prev.trace||[]), r.trace_step];
         state.screening.session = prev;
         await renderScreeningActive(prev);
       }
-    }catch(e){ showToast(e.message); }
-    finally{ setStatus(''); }
+    }catch(e){
+      showToast(e.message);
+      if(e.status === 409){ await resumeSession(sessionId, true); }   // stale/duplicate answer: show the current question
+    }
+    finally{ answering = false; lockAnswerButtons(false); setStatus(''); }
   }
 
   function renderTraceTable(trace){
     if(!trace || !trace.length) return `<div class="empty">No answers recorded yet.</div>`;
     return `<table><thead><tr><th>#</th><th>Item</th><th>Value</th><th>Belief before</th><th>Belief after</th></tr></thead><tbody>
-      ${trace.map(t=>`<tr><td>${esc(t.step)}</td><td>${esc(t.item)}</td><td>${esc(t.value)}</td><td>${fmt(t.belief_before)}</td><td>${fmt(t.belief_after)}</td></tr>`).join('')}
+      ${trace.map(t=>`<tr><td>${esc(t.step)}</td><td>${esc(t.item)}</td><td>${t.skipped ? 'skipped' : esc(t.value)}</td><td>${fmt(t.belief_before)}</td><td>${fmt(t.belief_after)}</td></tr>`).join('')}
     </tbody></table>`;
   }
 
@@ -239,6 +278,10 @@
           <div class="card metric" style="box-shadow:none"><div class="k">Threshold τ</div><div class="v">${fmt(r.explanation?.outcome?.tau ?? state.meta?.tau ?? 0.5,2)}</div></div>
         </div>
         <div class="notice warn" style="margin-top:10px"><strong>Not a diagnosis.</strong> Screening/referral-research estimate only. Labels/models have documented limitations (including questionnaire-derived circular labels in development data). Interpret with professional assessment.</div>
+        ${fallbackBanner(r.policy_info)}
+        ${r.stop_explanation ? `<h3 style="margin-top:14px">Why the questionnaire stopped</h3><div class="notice"><ul style="margin:0;padding-left:18px">${(r.stop_explanation.narrative||[]).map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>
+          ${(r.stop_explanation.limitations||[]).length?`<ul class="tiny muted">${r.stop_explanation.limitations.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>`:''}` : ''}
+        ${r.policy_info && r.policy_info.agent ? `<p class="tiny muted">Policy: ${esc(r.policy_info.agent)} · artifact ${esc(String(r.policy_info.artifact_sha256||'').slice(0,12))}</p>` : ''}
         <h3 style="margin-top:14px">Items asked & belief trace</h3>
         <p class="sub">Asked: ${safeJoin((r.items_asked||[]).map(esc), ', ') || '-'}</p>
         ${renderTraceTable(r.trace||[])}
@@ -252,10 +295,15 @@
           </div>
         </div>
         <h3 style="margin-top:14px">Support report (from answers given; no extra questions)</h3>
-        ${recs.length?`<div class="list">${recs.map(rec=>`<div class="item"><h4>${esc(rec.title||rec.recommendation||'Suggestion')}</h4><p><strong>Triggered by:</strong> ${esc(safeJoin(rec.triggering_evidence||rec.triggering_item_codes||rec.evidence_ids, ', ') || (rec.triggering_evidence && !Array.isArray(rec.triggering_evidence) ? JSON.stringify(rec.triggering_evidence) : '-'))}</p><p><strong>Why:</strong> ${esc(rec.reason||rec.why_useful||'')}</p><p><strong>How to try:</strong> ${esc(rec.how_to_try||'')}</p><p class="tiny muted">Source: ${esc(rec.source||rec.source_attribution||'rule-based, evidence-linked')} · ${esc(rec.review_status||'review status as provided')}</p></div>`).join('')}</div>`:`<div class="notice">No evidence-linked suggestions triggered, or report unavailable. ${esc(support.disclaimer||'')}</div>`}
+        ${recs.length?`<div class="list">${recs.map(rec=>`<div class="item"><h4>${esc(rec.title||'Suggestion')}</h4><p><strong>Triggered by:</strong> ${esc((rec.triggering_question_ids||[]).map((code,i)=>`${code} (${(rec.triggering_responses||[])[i]===1?'atypical':'typical'})`).join(', ') || '-')}</p><p><strong>Why:</strong> ${esc(rec.why_selected||'')}</p><p><strong>Idea:</strong> ${esc(rec.description||'')}</p><p class="tiny muted">Source: ${esc(rec.source_attribution||'rule-based, evidence-linked')} · ${esc(rec.review_status||'review status as provided')}</p>${(rec.limitations||[]).length?`<ul class="tiny muted rec-limitations">${rec.limitations.map(l=>`<li>${esc(l)}</li>`).join('')}</ul>`:''}</div>`).join('')}</div>`:`<div class="notice">No evidence-linked suggestions triggered, or report unavailable. ${esc(support.disclaimer||'')}</div>`}
+        ${(support.limitations||[]).length?`<div class="notice warn report-limitations" style="margin-top:8px"><strong>Limitations of this support report:</strong><ul>${support.limitations.map(l=>`<li>${esc(l)}</li>`).join('')}</ul></div>`:''}
+        ${recs.length&&support.disclaimer?`<p class="tiny muted report-disclaimer">${esc(support.disclaimer)}</p>`:''}
         ${support.unassessed_areas?.length?`<p class="tiny muted" style="margin-top:8px"><strong>Not assessed by this questionnaire:</strong> ${esc(safeJoin(support.unassessed_areas, ', '))}</p>`:''}
-        <div class="row" style="margin-top:12px"><a class="btn secondary" href="#/screening" onclick="location.reload()">New session</a><a class="btn ghost" href="#/explain">Open Explainable AI</a></div>
+        <div class="row" style="margin-top:12px"><a class="btn secondary" href="#/screening" id="newSessBtn">New session</a><a class="btn ghost" href="#/explain">Open Explainable AI</a></div>
       </div>`;
+    // No inline handler (it blocks a Content-Security-Policy): start fresh by reloading on the screening route.
+    const newBtn = $('#newSessBtn');
+    if(newBtn) newBtn.onclick = (e)=>{ e.preventDefault(); location.hash = '#/screening'; location.reload(); };
   }
 
   // ---------- Context Explorer ----------
@@ -317,7 +365,7 @@
         const o = state.obs.find(x=>x.id===b.dataset.edit); if(!o) return;
         $('#obsId').value=o.id; $('#obsCtx').value=o.context; $('#obsWhat').value=o.what_happened||''; $('#obsFreq').value=o.frequency||'';
         $('#obsDiff').value=o.difficulty||''; $('#obsHelp').value=o.what_helped||''; $('#obsCons').value=o.consistency||''; $('#obsNotes').value=o.notes||'';
-        $('#obsIns').checked=!!o.insufficient_info; if(o.occurred_at) $('#obsWhen').value = String(o.occurred_at).slice(0,16);
+        $('#obsIns').checked=!!o.insufficient_info; $('#obsWhen').value = o.occurred_at ? toLocalInput(o.occurred_at) : '';
         window.scrollTo({top:0,behavior:'smooth'});
       });
       $$('[data-del]').forEach(b=>b.onclick=async()=>{ if(!confirm('Remove this observation record?')) return; try{ await api(`/api/observations/${b.dataset.del}`,{method:'DELETE'}); showToast('Observation removed'); navigate(); }catch(e){showToast(e.message)} });
@@ -367,8 +415,8 @@
     $('#genSug').onclick = async ()=>{
       const oid = $('#supObs').value; if(!oid){showToast('Select an observation'); return;}
       try{ const sugs = await api('/api/support/suggest',{method:'POST',body:JSON.stringify({observation_id:oid})});
-        $('#sugList').innerHTML = sugs.length ? sugs.map((s,i)=>`<div class="item"><h4>${esc(s.title)}</h4><p><strong>Triggered by observation:</strong> ${esc(s.triggered_observation_id)}</p><p><strong>Why:</strong> ${esc(s.why_useful)}</p><p><strong>How to try:</strong> ${esc(s.how_to_try)}</p><p><strong>Record usefulness:</strong> ${esc(s.how_to_record)}</p><button class="btn small secondary" data-i="${i}">Use this</button></div>`).join('') : `<div class="empty">No suggestions.</div>`;
-        $$('[data-i]','#sugList').forEach(b=>b.onclick=()=>{ const s=sugs[Number(b.dataset.i)]; $('#stTitle').value=s.title; $('#stDomain').value=s.domain||''; $('#stObs').value=s.triggered_observation_id||oid; $('#stWhy').value=s.why_useful||''; $('#stHow').value=s.how_to_try||''; $('#stRec').value=s.how_to_record||''; showToast('Suggestion loaded into form'); });
+        $('#sugList').innerHTML = sugs.length ? sugs.map((s,i)=>`<div class="item"><h4>${esc(s.title)}</h4><p><strong>Triggered by observation:</strong> ${esc(s.triggered_observation_id)}</p><p class="tiny muted"><strong>Matched:</strong> ${(s.matched_terms||[]).length ? (s.matched_terms||[]).map(m=>`“${esc(m.term)}” (${esc(m.field)})`).join(', ') : 'no keyword (general check-in)'} · simple keyword rules, so dismiss it if the match is wrong</p><p><strong>Why:</strong> ${esc(s.why_useful)}</p><p><strong>How to try:</strong> ${esc(s.how_to_try)}</p><p><strong>Record usefulness:</strong> ${esc(s.how_to_record)}</p><button class="btn small secondary" data-i="${i}">Use this</button></div>`).join('') : `<div class="empty">No suggestions.</div>`;
+        $$('[data-i]',$('#sugList')).forEach(b=>b.onclick=()=>{ const s=sugs[Number(b.dataset.i)]; $('#stTitle').value=s.title; $('#stDomain').value=s.domain||''; $('#stObs').value=s.triggered_observation_id||oid; $('#stWhy').value=s.why_useful||''; $('#stHow').value=s.how_to_try||''; $('#stRec').value=s.how_to_record||''; showToast('Suggestion loaded into form'); });
       }catch(e){showToast(e.message)}
     };
     $('#stratForm').onsubmit = async (e)=>{
@@ -387,9 +435,9 @@
       <p><strong>Why useful:</strong> ${esc(s.why_useful||'—')}</p><p><strong>How to try:</strong> ${esc(s.how_to_try||'—')}</p><p><strong>Record usefulness:</strong> ${esc(s.how_to_record||'—')}</p>
       <p><strong>Outcome:</strong> ${esc(s.outcome||'—')}</p><p><strong>Notes:</strong> ${esc(s.notes||'—')}</p>
       <div class="row" style="margin-top:6px"><button class="btn small secondary" data-edit="${esc(s.id)}">Edit</button><button class="btn small ghost" data-tried="${esc(s.id)}">Mark tried/helped</button><button class="btn small danger" data-del="${esc(s.id)}">Remove</button></div></div>`).join('')}</div>` : `<div class="empty">No strategies saved yet. Generate suggestions from an observation.</div>`;
-    $$('[data-edit]','#stratList').forEach(b=>b.onclick=()=>{ const s=strategies.find(x=>x.id===b.dataset.edit); if(!s) return; $('#stId').value=s.id; $('#stTitle').value=s.title||''; $('#stDomain').value=s.domain||''; $('#stObs').value=s.triggered_observation_id||''; $('#stWhy').value=s.why_useful||''; $('#stHow').value=s.how_to_try||''; $('#stRec').value=s.how_to_record||''; $('#stStatus').value=s.status||'saved'; $('#stOutcome').value=s.outcome||''; $('#stNotes').value=s.notes||''; window.scrollTo({top:0}); });
-    $$('[data-tried]','#stratList').forEach(b=>b.onclick=async()=>{ const outcome = prompt('Outcome/usefulness (e.g. helped, mixed, did not help):','helpful'); if(outcome===null) return; try{ await api(`/api/support/strategies/${b.dataset.tried}`,{method:'PUT',body:JSON.stringify({status:'tried', outcome})}); await api(`/api/support/strategies/${b.dataset.tried}/attempts`,{method:'POST',body:JSON.stringify({status:'tried', outcome})}); showToast('Updated'); navigate(); }catch(e){showToast(e.message)} });
-    $$('[data-del]','#stratList').forEach(b=>b.onclick=async()=>{ if(!confirm('Remove this strategy?')) return; try{ await api(`/api/support/strategies/${b.dataset.del}`,{method:'DELETE'}); showToast('Removed'); navigate(); }catch(e){showToast(e.message)} });
+    $$('[data-edit]',$('#stratList')).forEach(b=>b.onclick=()=>{ const s=strategies.find(x=>x.id===b.dataset.edit); if(!s) return; $('#stId').value=s.id; $('#stTitle').value=s.title||''; $('#stDomain').value=s.domain||''; $('#stObs').value=s.triggered_observation_id||''; $('#stWhy').value=s.why_useful||''; $('#stHow').value=s.how_to_try||''; $('#stRec').value=s.how_to_record||''; $('#stStatus').value=s.status||'saved'; $('#stOutcome').value=s.outcome||''; $('#stNotes').value=s.notes||''; window.scrollTo({top:0}); });
+    $$('[data-tried]',$('#stratList')).forEach(b=>b.onclick=async()=>{ const outcome = prompt('Outcome/usefulness (e.g. helped, mixed, did not help):','helpful'); if(outcome===null) return; try{ await api(`/api/support/strategies/${b.dataset.tried}`,{method:'PUT',body:JSON.stringify({status:'tried', outcome})}); await api(`/api/support/strategies/${b.dataset.tried}/attempts`,{method:'POST',body:JSON.stringify({status:'tried', outcome})}); showToast('Updated'); navigate(); }catch(e){showToast(e.message)} });
+    $$('[data-del]',$('#stratList')).forEach(b=>b.onclick=async()=>{ if(!confirm('Remove this strategy?')) return; try{ await api(`/api/support/strategies/${b.dataset.del}`,{method:'DELETE'}); showToast('Removed'); navigate(); }catch(e){showToast(e.message)} });
   }
 
   // ---------- Timeline ----------
@@ -397,7 +445,7 @@
     const events = await api('/api/timeline').catch(()=>[]); state.timeline = events;
     view.innerHTML = `
       <div class="card">
-        <div class="row" style="justify-content:space-between"><h2>Timeline</h2><div class="row"><input id="tlSearch" type="text" placeholder="Search"><select id="tlKind"><option value="">All kinds</option><option value="observation">observation</option><option value="observation_update">observation_update</option><option value="support">support</option><option value="support_update">support_update</option><option value="support_attempt">support_attempt</option><option value="screening">screening</option><option value="privacy">privacy</option></select><button class="btn secondary" id="tlExport">Export (JSON)</button></div></div>
+        <div class="row" style="justify-content:space-between"><h2>Timeline</h2><div class="row"><input id="tlSearch" type="text" placeholder="Search"><select id="tlKind"><option value="">All kinds</option><option value="observation">observation</option><option value="observation_update">observation_update</option><option value="observation_delete">observation_delete</option><option value="support">support</option><option value="support_update">support_update</option><option value="support_attempt">support_attempt</option><option value="support_delete">support_delete</option><option value="screening">screening</option><option value="privacy">privacy</option></select><button class="btn secondary" id="tlExport">Export (JSON)</button></div></div>
         <p class="sub">Chronological records of observations, support strategies, and app events. Handle exports as sensitive.</p>
         <div id="tlList"></div>
       </div>`;
@@ -524,7 +572,11 @@
       if(name==='predictor_saudi_metrics.json') return `<div class="kv"><div>Test Brier</div><div>${fmt(obj.test_brier,4)}</div><div>Test AUROC</div><div>${fmt(obj.test_auroc,4)}</div><div>Test ECE</div><div>${fmt(obj.test_ece,4)}</div><div>Source</div><div>${esc(obj.source||'—')}</div><div>Note</div><div>${esc(obj.note||'Questionnaire-derived labels; interpret as research/dev metric')}</div></div>`;
       if(name==='step5_policy_benchmark_saudi.json'){
         const rows = obj.per_budget || obj.rows || [];
-        return `<div class="notice ${obj.h1?.supported?'good':'warn'}">H1 supported: <strong>${String(obj.h1?.supported)}</strong> (greedy ${fmt(obj.h1?.greedy_brier,4)} vs fixed ${fmt(obj.h1?.exact_fixed_subset_brier,4)}). Policies: ${safeJoin(obj.policies, ', ')||'-'}.</div>` + (rows.length?`<table><thead><tr><th>B</th><th>Policy</th><th>Brier</th><th>AUROC</th><th>Items mean</th></tr></thead><tbody>${rows.slice(0,30).map(r=>`<tr><td>${esc(r.B)}</td><td>${esc(r.policy)}</td><td>${fmt(r.brier,4)}</td><td>${fmt(r.auroc,4)}</td><td>${fmt(r.items_asked_mean,2)}</td></tr>`).join('')}</tbody></table>`:'');
+        // This artifact does not always carry an H1 verdict; say so instead of printing "undefined".
+        const h1Note = obj.h1 && typeof obj.h1.supported === 'boolean'
+          ? `<div class="notice ${obj.h1.supported?'good':'warn'}">H1 supported: <strong>${String(obj.h1.supported)}</strong> (greedy ${fmt(obj.h1.greedy_brier,4)} vs fixed ${fmt(obj.h1.exact_fixed_subset_brier,4)}). Policies: ${safeJoin(obj.policies, ', ')||'-'}.</div>`
+          : `<div class="notice warn">This artifact does not record an H1 verdict. Policies: ${safeJoin(obj.policies, ', ')||'-'}.</div>`;
+        return h1Note + (rows.length?`<table><thead><tr><th>B</th><th>Policy</th><th>Brier</th><th>AUROC</th><th>Items mean</th></tr></thead><tbody>${rows.slice(0,30).map(r=>`<tr><td>${esc(r.B)}</td><td>${esc(r.policy)}</td><td>${fmt(r.brier,4)}</td><td>${fmt(r.auroc,4)}</td><td>${fmt(r.items_asked_mean,2)}</td></tr>`).join('')}</tbody></table>`:'');
       }
       if(name==='benchmark_multiseed_saudi.json'){
         const rows = obj.aggregate || obj.rows || [];
@@ -566,7 +618,7 @@
           </div>
         </div>
         <div class="card"><h2>Consent</h2>
-          <p class="sub">Record consent preferences for using this research prototype and storing app data locally.</p>
+          <p class="sub">Keep a log of your consent choices for this research prototype. This is a record only: it does not switch any feature on or off, and app data is stored on this computer either way.</p>
           <div class="form">
             <div class="field"><label>Scope</label><select id="consentScope"><option value="general_research_use">General research/prototype use</option><option value="store_observations">Store observations & support plans locally</option><option value="store_screening_sessions">Store screening sessions locally</option></select></div>
             <div class="field"><label><input type="checkbox" id="consentGrant"> I understand this is a non-diagnostic research prototype and I consent to the selected local data handling.</label></div>
@@ -578,10 +630,12 @@
         </div>
       </div>
       <div class="card"><h2>Export & deletion (app-stored data)</h2>
-        <p class="sub">Controls apply to app-stored observations/support/timeline/consent records. They do not delete research datasets or results artifacts.</p>
+        <p class="sub">Controls apply to everything this app stores about people: observations, support strategies, screening sessions, the timeline and the consent log. "Delete all app data" removes everything except the consent log. None of these controls touch research datasets or results artifacts.</p>
         <div class="row">
-          <button class="btn secondary" id="expAll">Export observations/support/timeline (JSON)</button>
+          <button class="btn secondary" id="expAll">Export all app data (JSON)</button>
           <button class="btn danger" id="delObs">Delete all observations</button>
+          <button class="btn danger" id="delSess">Delete all screening sessions</button>
+          <button class="btn danger" id="delAll">Delete all app data</button>
         </div>
         <div id="privMsg" style="margin-top:10px"></div>
       </div>`;
@@ -589,17 +643,20 @@
       try{ await api('/api/consent',{method:'POST',body:JSON.stringify({scope:$('#consentScope').value, granted:$('#consentGrant').checked, details:$('#consentDetails').value})}); showToast('Consent saved'); navigate(); }catch(e){showToast(e.message)}
     };
     $('#expAll').onclick = async ()=>{ try{ const data = await api('/api/timeline/export',{method:'POST'}); const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='neurobridge_export.json'; a.click(); showToast('Export downloaded'); }catch(e){showToast(e.message)} };
+    $('#delSess').onclick = async ()=>{ if(!confirm('Delete ALL stored screening sessions (answers, results and reports)? This cannot be undone.')) return; try{ await api('/api/privacy/delete_sessions',{method:'POST'}); showToast('Screening sessions deleted'); navigate(); }catch(e){showToast(e.message)} };
+    $('#delAll').onclick = async ()=>{ if(!confirm('Delete ALL app data: observations, support strategies, screening sessions and the timeline? The consent log is kept. This cannot be undone.')) return; try{ await api('/api/privacy/delete_all',{method:'POST'}); showToast('All app data deleted'); navigate(); }catch(e){showToast(e.message)} };
     $('#delObs').onclick = async ()=>{ if(!confirm('Delete ALL app-stored observations? This cannot be undone.')) return; try{ await api('/api/privacy/delete_observations',{method:'POST'}); showToast('Observations deleted'); navigate(); }catch(e){showToast(e.message)} };
   }
 
   // ---------- init ----------
   function initTheme(){
-    const t = localStorage.getItem('nb_theme') || '';
+    // localStorage can throw (private windows, blocked site data); the theme is a convenience, not a requirement.
+    const t = (()=>{ try{ return localStorage.getItem('nb_theme') || ''; }catch(e){ return ''; } })();
     if(t) document.documentElement.setAttribute('data-theme', t);
     $('#themeBtn').onclick = ()=>{
       const cur = document.documentElement.getAttribute('data-theme')==='dark' ? '' : 'dark';
       if(cur) document.documentElement.setAttribute('data-theme', cur); else document.documentElement.removeAttribute('data-theme');
-      localStorage.setItem('nb_theme', cur);
+      try{ localStorage.setItem('nb_theme', cur); }catch(e){ /* preference just won't persist */ }
     };
   }
 

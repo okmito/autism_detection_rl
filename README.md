@@ -27,11 +27,14 @@ python3 -m venv .venv
 Note: a venv created on Linux (e.g. under WSL) cannot be run from Windows cmd and vice versa — keep them separate (`.venv` vs `.venv-win`; both are gitignored).
 
 ### 2. Run the test suite
+`pytest` is a development dependency, not a runtime one: install `requirements-dev.txt` (which includes `requirements.txt`).
 ```bash
+# Linux:    .venv/bin/pip install -r requirements-dev.txt
+# Windows:  .venv-win\Scripts\python -m pip install -r requirements-dev.txt
 # Windows:  .venv-win\Scripts\python -m pytest tests -q
 # Linux:    .venv/bin/python -m pytest tests -q
 ```
-Expected on this machine: **486 passed, 15 failed, 184 skipped** (latest verified full-suite run). Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
+Expected on this machine: **950 passed, 12 failed, 80 skipped** (latest verified full-suite run; the 12 failures are environmental, see below). Useful flags: `-x` stop at first failure, `-rs` show skip reasons, `-k <keyword>` filter.
 
 > The 15 failures are the previously observed environmental failures (missing gitignored Polish `.sav`/CSV, frozen artifact-hash pins recorded on another machine, and 1 doc-rule failure — see §21) — **not** a claim the repository has zero failures, and not regressions introduced by the V2 changes.
 
@@ -46,7 +49,7 @@ Expected on this machine: **486 passed, 15 failed, 184 skipped** (latest verifie
 >   artifacts appeared missing.
 > - Later revisions quoted 126, then 163, then 191 as the suite grew with each
 >   correction pass. Each was correct when written.
-> - Current: **558 passed / 12 failed (environmental) / 78 skipped.** Verify with the command above; the number is
+> - Current: **950 passed / 12 failed (environmental) / 80 skipped.** Verify with the command above; the number is
 >   the point-in-time count, not a target.
 
 > **Disk-space gotcha (2026-10-01):** a plain `pip install -r requirements.txt` pulls the **CUDA** build of torch (~2 GB of nvidia wheels) and fails with `No space left on device` — `/tmp` is a 3.7 GB tmpfs. Install CPU-only torch instead:
@@ -102,7 +105,12 @@ The repository now includes an integrated **NeuroBridge** web application (resea
 ```
 
 - **Port:** default `8010`. Override with `PORT` (e.g. `set PORT=8080` on Windows / `PORT=8080` on Unix).
-- **App data (local):** screening sessions, observations, support strategies, timeline events and consent records are stored in `data/neurobridge.db` by default (override with `NEUROBRIDGE_DB`). This is separate from research datasets/artifacts.
+- **Needs the screening dataset:** the Saudi Q-CHAT-10 CSV must be present under `data/raw/` (it is gitignored). Without it `/api/health` reports `data_present: false` and screening endpoints answer `503` with instructions; the other pages still work.
+- **App data (local):** screening sessions, observations, support strategies, timeline events and consent records are stored in `data/neurobridge.db` by default (override with `NEUROBRIDGE_DB`). The file is gitignored and must never be committed: it holds free-text notes about a person. The schema is versioned (`PRAGMA user_version`); an older database is upgraded automatically on first start, including a one-time clean-up that removes observation/strategy text that earlier versions had copied into the timeline.
+- **Privacy controls (Privacy & Consent page):** export everything, delete all observations, delete all screening sessions, or delete all app data. The consent page is an acknowledgement log; it records choices but does not switch features on or off.
+- **Local only:** the server binds to `127.0.0.1`, rejects non-loopback `Host` headers and cross-origin or non-JSON state changes, and sends no CORS headers.
+- **Logging:** set `NEUROBRIDGE_LOG_LEVEL` (default `INFO`). Request bodies are never logged. Unexpected errors return an opaque `error_id` that also appears in the log.
+- **Optional install:** `pip install -e .` makes `app` and `src` importable from any directory; running from the repository root needs no install.
 - **First screening load:** may initialize/load the predictor; the cached demo model `results/demo_model_saudi_seed0_platt_v2.{pt,pkl}` is used when present.
 - **No external services/keys required.** Optional: `NEUROBRIDGE_SECRET` for the app secret.
 - **Important:** NeuroBridge is an explainable, adaptive screening and support **research prototype**. It provides screening/referral-research estimates and non-diagnostic support ideas only — it does **not** confirm or rule out autism and is not a substitute for professional assessment. Research metrics shown are from available offline artifacts and carry documented limitations (e.g. questionnaire-derived/circular labels, open verification gates, blocked/incompatible external validation where indicated).
@@ -216,6 +224,7 @@ records = load_dataset("nz", synthetic=True)
 
 | Document | Contents |
 |---|---|
+| **`RL_ADAPTIVE_REPORT.md`** | **adaptive RL questionnaire: MDP, reward, nested-CV evaluation on clinician labels, explanations, app integration gate (2026-11-13)** |
 | `README.md` (this file) | quickstart, repo layout, invariants, gate status, reports table |
 | **`diagnosisReady.md`** | **audit + roadmap: what stands between this project and diagnostic use (2026-10-01)** |
 | **`V6_LAMBDA_DECISION.md`** | **the V-6 evidence pack: λ sweep, the objective-saturation finding, and the proposed cost grid (2026-10-01). Does NOT sign off V-6** |
@@ -294,7 +303,7 @@ configs/config.yaml (Hydra)
 scripts/step2_train_and_sweep.py, scripts/step3_preliminary_reports.py, scripts/step4_train_policies.py, scripts/step5_policy_benchmark.py, scripts/step6_lambda_sweep.py, scripts/step7_rl_diagnosis.py, scripts/step8_evoi_scale_analysis.py, scripts/step9_v4_v7_gates.py, scripts/step10_external_validation.py, scripts/step17_outcome_explainability.py
 scripts/demo_live.py (terminal demo), scripts/demo_app.py + scripts/demo_static/ (legacy browser demo)
 docs/prisma/screening_worksheet.csv
-tests/ (558 passed, 12 environmental failures, 78 skipped)
+tests/ (950 passed, 12 environmental failures, 80 skipped)
 ```
 
 ## Key invariants — §9-11
@@ -325,7 +334,7 @@ Q-CHAT-10 binary mapping: Q1-9 Sometimes/Rarely/Never→1 ; Q10 Always/Usually/S
 
 ## Tests — §21
 ```
-pytest tests -q   # 558 passed, 12 failed (all environmental — see below), 78 skipped
+pytest tests -q   # 950 passed, 12 failed (all environmental — see below), 80 skipped
 ```
 
 **Test-count history.** The figure has been wrong in this file several times, in
@@ -392,6 +401,26 @@ The 28 RL tests are **regressions for defects that had never been caught** becau
 > **Everything above is measured against circular questionnaire labels and is not clinical evidence.** See `diagnosisReady.md` §4 and `V6_LAMBDA_DECISION.md` §4, which shows that at λ=0 the objective saturates (`V* = 1.000000`, support pure after ~4 questions), so the measured value of adaptive stopping is a property of the label rule.
 
 All RL results are single-seed at λ=0 — see `AGENT_PROGRESS.md` §Next Required Steps.
+
+## Adaptive RL questionnaire (`rl_adaptive`, 2026-11-13)
+
+`src/rl/` implements adaptive screening as an MDP with ASK(item) and a learned STOP (minimum 2 questions, cap 10),
+trained and evaluated against the clinician-established Polish labels by nested cross-validation (the Saudi labels are
+`1[sum >= 4]` and cannot test this). Two agents: model-based RL (exact value iteration over all 4^10 histories of a
+learned naive-Bayes belief MDP) and model-free Double DQN. Full write-up: **`RL_ADAPTIVE_REPORT.md`**.
+
+| (nested CV, n=252) | BA | AUROC | mean questions |
+|---|---|---|---|
+| full Q-CHAT-10 (same scorer) | 0.864 | 0.937 | 10.0 |
+| RL value iteration | 0.851 | 0.900 | 4.2 |
+| RL DQN | 0.838 | 0.885 | 3.5 |
+| confidence-threshold stopping (non-RL) | 0.860 | 0.907 | 5.4 |
+
+Value iteration passed the pre-registered gate (BA non-inferior at a *provisional* 0.05 margin, Holm p = 0.004) and is
+served as the app policy `rl_adaptive`, with per-decision ASK/STOP explanations; it is not non-inferior at 0.03, the
+result is sensitive to the fold assignment, and AUROC drops. The default policy stays `greedy` pending supervisor
+decisions (report §12). Reproduce with `scripts/step18_rl_adaptive_protocol.py`, `step19_rl_adaptive_experiment.py`,
+`step20_build_served_policy.py`.
 
 ## Reproducibility
 - configs/config.yaml records budget, lambda_grid, seeds, thresholds.

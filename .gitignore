@@ -26,3 +26,12 @@ build/
 
 # SPSS raw exports: participant-level data, never tracked
 data/*.sav
+
+# NeuroBridge app database (observations/sessions/consent about real people); never tracked
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+
+# Node tooling for tests/js (jsdom); install with `npm install`
+node_modules/

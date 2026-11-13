@@ -1,0 +1,32 @@
+# Packaging + tool configuration.
+#
+# Everyday use needs no install: run from the repository root (`python -m app.server`,
+# `python scripts/<name>.py`, `pytest`). `pip install -e .` additionally makes `app` and `src` importable
+# from any working directory, which is what replaced the old `sys.path.insert` / `os.chdir` hacks
+# in the web app (audit finding T5). Research scripts under scripts/ still add the repo root to sys.path
+# themselves because they are run as plain files. Use an *editable* install: data/ and results/ are resolved
+# relative to the repository checkout, so a regular (copying) install would not find them.
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neurobridge"
+version = "0.1.0"
+description = "Adaptive Q-CHAT-10 screening research prototype (not a diagnostic device)"
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["app*", "src*"]
+
+[tool.setuptools.package-data]
+app = ["static/**/*"]
+
+[tool.pytest.ini_options]
+# Make `import src...` / `import app...` work for a bare `pytest` as well as `python -m pytest`.
+pythonpath = ["."]
