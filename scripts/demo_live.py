@@ -48,6 +48,8 @@ from src.explain.render import render_text
 from src.env.costs import get_costs
 from src.solvers.exact_custom import ExactDP
 
+# V2 consolidated defaults (configs/config.yaml): policy.type=greedy,
+# stopping DISABLED (budget use), Bayesian SD experimental reporting only.
 BUDGET = 6          # max questions per episode (configs/config.yaml: env.question_budget)
 TAU = 0.5           # frozen referral threshold (configs/config.yaml: eval.operating_threshold)
 SEED = 0
@@ -55,6 +57,12 @@ N_ITEMS = 10
 # Platt-on-logit calibration keeps the live belief trace continuous; isotonic
 # saturates to exactly 0/1 on this circular dataset (see scripts/demo_app.py).
 DEMO_CALIBRATION = "platt"
+
+
+def _default_policy(train):
+    """Single default-path constructor (V2 consolidation, §2): Greedy IG,
+    deterministic, never returns STOP unless the environment forces it."""
+    return GreedyIGPolicy(train, N_ITEMS)
 
 
 def hr(title: str) -> None:
@@ -152,7 +160,7 @@ def main() -> int:
     rec = test[0]
     print(f"test record      : true class = {'ASD-positive' if rec['label'] else 'ASD-negative'}")
     print(f"                   (hidden from the policy; used only to score afterwards)")
-    ep = run_episode(rec, BUDGET, 0, GreedyIGPolicy(train, N_ITEMS), predictor, 0.0, tau=TAU)
+    ep = run_episode(rec, BUDGET, 0, _default_policy(train), predictor, 0.0, tau=TAU)
     print(f"\n  step | asked | answer | P(ASD) before -> after")
     print("  -----+-------+--------+-----------------------")
     for t in ep["trace"]:
@@ -231,7 +239,7 @@ def main() -> int:
     # ------------------------------------------------------------- STEP 7
     hr(f"STEP 7 - POLICY COMPARISON ON THE FULL TEST SET (B={BUDGET} episodes)")
     print("running greedy policy on all test records...", flush=True)
-    g = policy_eval(predictor, GreedyIGPolicy(train, N_ITEMS), test)
+    g = policy_eval(predictor, _default_policy(train), test)
     print("running random policy on all test records...", flush=True)
     r = policy_eval(predictor, RandomPolicy(seed=SEED), test)
     print(f"{'policy':<12} {'Brier':>8} {'UAR':>8} {'avg questions':>15}")
@@ -273,7 +281,7 @@ def interview(predictor, train) -> None:
     print("Answer each question with 1 (yes/atypical) or 0 (no/typical).")
     print("Type s to stop early (allowed after 1 question). Max "
           f"{BUDGET} questions.\n")
-    policy = GreedyIGPolicy(train, N_ITEMS)
+    policy = _default_policy(train)
     state = {"mask": np.zeros(N_ITEMS, dtype=int),
              "value": np.full(N_ITEMS, -1, dtype=int),
              "n": N_ITEMS, "questions_remaining": BUDGET, "budget": BUDGET}

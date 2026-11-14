@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroBridge — Adaptive Screening & Support (Research Prototype)</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">NB</div>
+        <div>
+          <div class="brand-name">NeuroBridge</div>
+          <div class="brand-sub">Research prototype · not diagnostic</div>
+        </div>
+      </div>
+      <nav id="nav" class="nav">
+        <a href="#/overview" data-route="overview">Overview</a>
+        <a href="#/screening" data-route="screening">Guided Screening</a>
+        <a href="#/context" data-route="context">Context Explorer</a>
+        <a href="#/support" data-route="support">Support Studio</a>
+        <a href="#/timeline" data-route="timeline">Timeline</a>
+        <a href="#/rl-lab" data-route="rl-lab">RL Intelligence Lab</a>
+        <a href="#/explain" data-route="explain">Explainable AI</a>
+        <a href="#/research" data-route="research">Research & Analytics</a>
+        <a href="#/privacy" data-route="privacy">Privacy & Consent</a>
+      </nav>
+      <div class="sidebar-foot">
+        <button id="themeBtn" class="btn ghost small" type="button">Toggle theme</button>
+        <div class="muted tiny">All processing local. Screening/referral-research only.</div>
+      </div>
+    </aside>
+    <main id="main" class="main" tabindex="-1">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle" class="page-title">Overview</h1>
+          <p id="pageSub" class="page-sub"></p>
+        </div>
+        <div id="globalStatus" class="status-pill" aria-live="polite"></div>
+      </header>
+      <div id="view" class="view"></div>
+      <footer class="footer">
+        <p><strong>Important:</strong> NeuroBridge is an explainable, adaptive screening and support <em>research prototype</em>. It provides screening/referral-research estimates and non-diagnostic support ideas only — it does not confirm or rule out autism and is not a substitute for professional assessment. Some research results shown are based on questionnaire-derived/circular labels and have known limitations.</p>
+      </footer>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

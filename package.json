@@ -1,0 +1,8 @@
+{
+  "name": "neurobridge-frontend-tests",
+  "private": true,
+  "description": "Dev-only tooling for the NeuroBridge frontend regression tests in tests/js. Not needed to run the app or the Python test suite (those tests skip without it).",
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

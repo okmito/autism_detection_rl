@@ -6,46 +6,113 @@
 <title>Adaptive Autism Screening — Research Prototype</title>
 <link rel="icon" href="data:,">
 <style>
+  /* ---- design system: light default; premium minimalism ---- */
   :root{
-    --bg:#f6f7f9;
-    --surface:#ffffff;
-    --surface-2:#fbfcfd;
-    --line:#e3e6ea;
-    --line-soft:#edeff2;
-    --text:#16191d;
-    --muted:#5f6773;
-    --muted-2:#8a919b;
-    --accent:#2f6feb;
-    --accent-ink:#1c4bb5;
-    --accent-soft:#eef3fe;
-    --warn:#a2570a;
-    --warn-soft:#fdf6ea;
-    --good:#16713c;
-    --good-soft:#edf8f1;
-    --radius:10px;
-    --radius-lg:14px;
+    --bg:#F7F8FA;               /* page */
+    --surface:#FFFFFF;          /* primary surface */
+    --surface-2:#FCFDFE;        /* subtle fill */
+    --surface-3:#EEF3FF;        /* accent tint */
+    --line:#E7EAF0;             /* borders */
+    --line-soft:#EEF1F6;
+    --line-strong:#CBD5E1;
+    --text:#172033;             /* primary text */
+    --muted:#667085;            /* secondary text */
+    --muted-2:#98A2B3;          /* muted text */
+    --accent:#3867E8;           /* brand accent */
+    --accent-ink:#2F56C6;
+    --accent-soft:#EEF3FF;
+    --warn:#C58A32;
+    --warn-soft:#FDF6EA;
+    --good:#18866B;
+    --good-soft:#ECFDF5;
+    --danger:#D65A5A;
+    --danger-soft:#FEF2F2;
+    --radius:8px;
+    --radius-lg:12px;
     --shadow:0 1px 2px rgba(16,24,40,.04);
   }
+  :root[data-theme="dark"]{
+    --bg:#070f1f; --surface:#0d1930; --surface-2:#0b1628; --surface-3:#122448;
+    --line:#1c2f55; --line-soft:#152842; --line-strong:#33509e;
+    --text:#e8effc; --muted:#9fb2d8; --muted-2:#7086ad;
+    --accent:#3b82f6; --accent-ink:#7fb0ff; --accent-soft:#122448;
+    --warn:#f5b453; --warn-soft:#3a2410; --good:#34d399; --good-soft:#0d2f24;
+    --danger:#f87171; --danger-soft:#3a1212;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+  nav.topnav{
+    display:flex;align-items:center;gap:4px;flex-wrap:wrap;
+    padding:4px 0 0;margin:0 0 26px;border-bottom:1px solid var(--line);
+  }
+  nav.topnav a{
+    color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:520;
+    padding:9px 10px;position:relative;
+  }
+  nav.topnav a.active,nav.topnav a:hover{color:var(--text)}
+  nav.topnav a.active::after{
+    content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;
+    background:var(--accent);border-radius:2px 2px 0 0;
+  }
+  nav.topnav .session{margin-left:auto;font-size:12px;color:var(--muted);padding-bottom:9px}
+  @media(max-width:640px){nav.topnav .session{margin-left:0;padding-bottom:9px}}
+  .dash-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:20px}
+  @media(max-width:820px){.dash-grid{grid-template-columns:1fr}}
+  .gauge-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:6px 0 0}
+  .gauge{transform:rotate(-90deg)}
+  .gauge .bg{stroke:var(--line-soft)}
+  .gauge .fg{stroke:var(--accent);stroke-linecap:round;transition:stroke-dashoffset .8s ease}
+  .stat-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;margin:0 0 18px;background:var(--line-soft);border:1px solid var(--line-soft);border-radius:var(--radius-lg);overflow:hidden}
+  .stat-card{background:var(--surface);padding:14px 16px}
+  .stat-card .k{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .stat-card .v{font-size:19px;font-weight:640;margin-top:4px;font-variant-numeric:tabular-nums;color:var(--text)}
+  .empty-state{text-align:left;padding:16px 12px;color:var(--muted);font-size:13.5px}
+  /* screening summary horizontal scale */
+  .scale{position:relative;height:6px;background:var(--line-soft);border-radius:99px;margin:16px 0 6px}
+  .scale i{position:absolute;top:0;left:0;height:100%;background:var(--accent);border-radius:99px;transition:width .8s ease}
+  .scale-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted-2)}
+  /* page headers */
+  .page-title{font-size:27px;font-weight:640;letter-spacing:-.02em;line-height:1.15;color:var(--text)}
+  .page-sub{font-size:14px;color:var(--muted);margin-top:6px;max-width:62ch;line-height:1.55}
+  .meta-row{display:flex;flex-wrap:wrap;gap:18px;margin:16px 0 22px;font-size:12.5px;color:var(--muted)}
+  .meta-row b{color:var(--text);font-weight:580}
+  /* section headings */
+  .card{background:transparent;border:none;box-shadow:none;padding:0;border-radius:0}
+  .card-title{font-size:15px;font-weight:640;letter-spacing:0;text-transform:none;color:var(--text);margin-bottom:12px}
+  /* response contribution bars */
+  .contrib-row{display:grid;grid-template-columns:38px 1fr 76px 60px;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:13px}
+  .contrib-row:last-child{border-bottom:none}
+  .contrib-bar{height:5px;background:var(--line-soft);border-radius:99px;position:relative;overflow:hidden}
+  .contrib-bar i{position:absolute;top:0;left:50%;height:100%;border-radius:99px}
+  .contrib-bar i.pos{background:var(--warn)}
+  .contrib-bar i.neg{background:var(--good)}
+  /* theme toggle */
+  .toggle{font-size:12.5px;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:6px 12px;cursor:pointer}
+  .toggle:hover{color:var(--text)}
+  /* recommendations numbered list */
+  .reco-list{counter-reset:reco}
+  .reco-list > li{counter-increment:reco;list-style:none;position:relative;padding:10px 0 10px 34px;border-bottom:1px solid var(--line-soft)}
+  .reco-list > li:last-child{border-bottom:none}
+  .reco-list > li::before{content:counter(reco);position:absolute;left:0;top:11px;width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);font-size:11px;font-weight:640;display:flex;align-items:center;justify-content:center}
   *{box-sizing:border-box;margin:0;padding:0}
   body{
     background:var(--bg); color:var(--text);
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
-    font-size:15px; line-height:1.55; min-height:100vh;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+    font-size:14.5px; line-height:1.55; min-height:100vh;
     -webkit-font-smoothing:antialiased;
   }
-  .wrap{max-width:760px;margin:0 auto;padding:0 20px 72px}
+  .wrap{max-width:1300px;margin:0 auto;padding:0 28px 72px}
 
   /* ---------------------------------------------------------- header */
   header{
     display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-    padding:20px 0 18px;border-bottom:1px solid var(--line);margin-bottom:28px;
+    padding:18px 0 14px;border-bottom:1px solid var(--line);margin-bottom:18px;
   }
   .mark{
-    width:34px;height:34px;border-radius:9px;flex:0 0 auto;
-    background:var(--accent-soft);border:1px solid #d8e4fb;
-    display:flex;align-items:center;justify-content:center;color:var(--accent-ink);
+    width:32px;height:32px;border-radius:8px;flex:0 0 auto;
+    background:var(--accent-soft);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;color:var(--accent);
   }
-  .brand h1{font-size:16px;font-weight:620;letter-spacing:-.01em;line-height:1.25}
+  .brand h1{font-size:15px;font-weight:640;letter-spacing:-.01em;line-height:1.25}
   .brand .role{
     font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
     color:var(--accent-ink);background:var(--accent-soft);border:1px solid #d8e4fb;
@@ -261,6 +328,25 @@
       <span class="chip" id="chipBudget" hidden>Budget <b>—</b></span>
     </div>
   </header>
+  <nav class="topnav" aria-label="Primary">
+    <a href="#startScreen" class="active" data-nav="start">Risk Assessment</a>
+    <a href="#quizScreen" data-nav="quiz">Questionnaire</a>
+    <a href="#resultScreen" data-nav="explain">Explainability</a>
+    <a href="#recoPanel" data-nav="recommend">Recommendations</a>
+    <span class="session" id="navSession">Demo session</span>
+    <button class="toggle" id="themeToggle" type="button" aria-label="Toggle theme">Dark</button>
+  </nav>
+  <div class="meta-row" style="margin-top:-14px;margin-bottom:22px">
+    <span>Session <b id="metaSession">—</b></span>
+    <span>Date <b id="metaDate">—</b></span>
+    <span>Policy <b id="metaPolicy">—</b></span>
+  </div>
+  <div class="stat-cards" id="activeConfigBar" aria-label="Active configuration" style="margin-top:-6px">
+    <div class="stat-card"><div class="k">Active policy</div><div class="v" id="cfgPolicy">—</div></div>
+    <div class="stat-card"><div class="k">Stopping</div><div class="v" id="cfgStop">budget use (no adaptive stop)</div></div>
+    <div class="stat-card"><div class="k">Uncertainty</div><div class="v" id="cfgUnc">Bayesian SD — reporting only</div></div>
+    <div class="stat-card"><div class="k">Data</div><div class="v" id="cfgData">—</div></div>
+  </div>
 
   <!-- ================================================= START SCREEN -->
   <section class="card" id="startScreen" aria-labelledby="startTitle">
@@ -368,12 +454,41 @@
   <!-- ================================================= RESULT SCREEN -->
   <section class="card" id="resultScreen" hidden aria-labelledby="resTitle">
     <div class="card-title" id="resTitle">Screening result</div>
-    <div class="result-hero">
-      <div class="num" id="resValue">—</div>
-      <div class="lab" id="resLabel">Screening risk estimate</div>
-      <div class="ruler"><i id="resMark" style="left:0%"></i></div>
-      <div class="ruler-scale"><span>0.0</span><span>threshold <b id="resTau">—</b></span><span>1.0</span></div>
-      <div id="resDecision"></div>
+    <div class="result-hero" style="text-align:left">
+      <h2 class="page-title" style="margin-bottom:4px">Screening overview</h2>
+      <p class="page-sub">Review the questionnaire responses and the research model assessment.</p>
+      <div class="dash-grid" style="margin-top:20px">
+        <div>
+          <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+            <div class="num" id="resValue" style="font-size:42px;font-weight:660;letter-spacing:-.02em;font-variant-numeric:tabular-nums">—</div>
+            <div class="lab" id="resLabel" style="font-size:15px;color:var(--muted)">Research screening estimate</div>
+          </div>
+          <div class="scale"><i id="resScale" style="width:0%"></i></div>
+  <div class="scale-scale"><span>0.0</span><span>τ = <b id="resTau">—</b></span><span>1.0</span></div>
+          <div class="scale-scale"><span>0.0</span><span>1.0</span></div>
+          <div id="resDecision" style="margin-top:14px"></div>
+        </div>
+        <div>
+          <div class="card-title" style="margin-bottom:6px">Model status</div>
+          <p style="font-size:13.5px;color:var(--muted);line-height:1.6" id="resStatusNote"></p>
+        </div>
+      </div>
+    </div>
+    <div class="stat-cards" style="margin-top:20px">
+      <div class="stat-card"><div class="k">Questions answered</div><div class="v" id="dashAsked">—</div></div>
+      <div class="stat-card"><div class="k">Questions remaining</div><div class="v" id="dashLeft">—</div></div>
+      <div class="stat-card"><div class="k">Evidence coverage</div><div class="v" id="dashCov">—</div></div>
+      <div class="stat-card"><div class="k">Predictive uncertainty</div><div class="v" id="dashUnc">—</div></div>
+    </div>
+    <div class="dash-grid">
+      <div>
+        <div class="card-title">Response contributions</div>
+        <div id="dashContrib" class="empty-state">No screening estimate yet. Start the assessment above.</div>
+      </div>
+      <div>
+        <div class="card-title">Assistant notes</div>
+        <div class="note" id="dashNote">Estimates update dynamically. Confidence is a model-stability statement, not clinical certainty. There is no clinically justified Low/Moderate/High boundary in this research system.</div>
+      </div>
     </div>
     <p class="dbody" style="text-align:center;margin-top:14px">
       This result is intended for research screening and should not be interpreted
@@ -423,9 +538,20 @@
     </details>
   </section>
 
+  <section class="card" id="recoPanel" hidden style="margin-top:26px">
+    <div class="card-title">Recommendations</div>
+    <p class="page-sub" style="margin-bottom:12px">Only the existing support system generates these; they include the screening response that triggered each one.</p>
+    <div id="recoBody" class="empty-state">Recommendations appear here only when the existing backend returns them.</div>
+  </section>
+
   <footer>
-    <p>This research prototype is intended for screening research and does not
-    provide a medical diagnosis.</p>
+    <p>This is an AI-assisted research screening tool, not a diagnostic instrument.
+    Results require interpretation by qualified healthcare professionals.
+    This research prototype is intended for screening research and does not provide a medical diagnosis.
+    Default acquisition policy is Greedy Information Gain (configs/config.yaml: policy.type=greedy).
+    Experimental components (hybrid IRT+EVOI, adaptive stopping) are preserved for reproducibility
+    and are not part of the default path. Bayesian predictive SD is an experimental model diagnostic
+    (ECE 0.20–0.24 on held-out data — probabilities are not clinically calibrated) and never gates stopping.</p>
     <p id="footMeta"></p>
     <p>Screening / referral-research prototype · not clinically validated ·
     not a diagnostic tool.</p>
@@ -797,19 +923,100 @@ async function stopEarly() {
   }
 }
 
+/* --------------------------------------------------- dashboard wiring */
+function setGauge(p) { /* scale is driven directly in syncDash */ }
+function toggleTheme() {
+  const r = document.documentElement;
+  const next = r.dataset.theme === 'dark' ? '' : 'dark';
+  r.dataset.theme = next;
+  $('themeToggle').textContent = next === 'dark' ? 'Light' : 'Dark';
+}
+// The script sits at the end of <body>, so elements already exist.
+// A DOMContentLoaded listener would never fire at this point.
+$('themeToggle').addEventListener('click', toggleTheme);
+$('metaDate').textContent = new Date().toISOString().slice(0, 10);
+function syncDash(res) {
+  const m = state.meta || {};
+  // summary cards — backend values only
+  const unc = res.explanation && res.explanation.uncertainty;
+  $('dashUnc').textContent = unc && unc.available && unc.interval
+    ? '[' + num(unc.interval[0], 2) + ', ' + num(unc.interval[1], 2) + ']'
+    : 'unavailable';
+  const asked = res.asked != null ? res.asked : 0;
+  const budget = m.budget != null ? m.budget : 0;
+  $('dashAsked').textContent = asked + ' / ' + (budget || '—');
+  $('dashLeft').textContent = (budget != null ? Math.max(0, budget - asked) : '—');
+  const covered = (res.items_asked || []).length;
+  const total = m.n_items != null ? m.n_items : null;
+  $('dashCov').textContent = total ? covered + ' of ' + total : covered;
+  // model status (no invented thresholds)
+  const ref = res.decision === 'REFERRAL_RECOMMENDED';
+  const wide = unc && unc.available && unc.interval && (unc.interval[1] - unc.interval[0]) > 0.3;
+  $('resStatusNote').textContent = wide
+    ? 'Inconclusive. Further assessment may be appropriate.'
+    : (ref ? 'Elevated screening signal. Consider discussing with a qualified healthcare professional.'
+           : 'No elevated signal on the available evidence.');
+  $('resScale').style.width = (Math.max(0, Math.min(1, Number(p))) * 100) + '%';
+  setGauge(p);
+  // contributing responses — Group-Shapley contributions only (sorted by magnitude)
+  const box = $('dashContrib');
+  const contribs = ((res.explanation && res.explanation.contributions) || []).slice()
+    .sort((a, b) => Math.abs(Number(b.phi) || 0) - Math.abs(Number(a.phi) || 0));
+  if (contribs.length) {
+    box.innerHTML = contribs.slice(0, 5).map(c => {
+      const pts = 100 * Number(c.phi || 0);
+      const w = Math.min(50, Math.abs(pts) * 4);
+      const resp = c.response === 1 ? 'atypical' : 'typical';
+      const bar = c.phi >= 0
+        ? '<i class="pos" style="left:50%;width:' + w + '%"></i>'
+        : '<i class="neg" style="left:' + (50 - w) + '%;width:' + w + '%"></i>';
+      return '<div class="contrib-row">' +
+        '<span style="font-weight:640">' + esc(c.item) + '</span>' +
+        '<span style="color:var(--muted)">' + esc(resp) + '</span>' +
+        '<span class="contrib-bar">' + bar + '</span>' +
+        '<span style="text-align:right;font-variant-numeric:tabular-nums">' +
+        (pts >= 0 ? '+' : '') + pts.toFixed(1) + '</span></div>';
+    }).join('');
+  } else {
+    box.textContent = 'No observed responses were available to attribute.';
+  }
+  // active configuration (V2 consolidation: Greedy is default; experimental
+  // IRT/stopping are never shown as active)
+  $('cfgPolicy').textContent = state.policyLabel || '—';
+  $('cfgStop').textContent = 'budget use (no adaptive stop)';
+  $('cfgUnc').textContent = 'Bayesian SD — reporting only';
+  // recommendations — support report only, plus the standard messages
+  const reco = res.support_report;
+  const rb = $('recoBody');
+  const recItems = (reco && reco.recommendations) || [];
+  const staticItems = [
+    'Consider discussing the screening result with a qualified healthcare professional.',
+    'Further developmental assessment may be appropriate.'
+  ];
+  const items = recItems.map(r => r.title + (r.why_selected ? ' — ' + r.why_selected : ''))
+    .concat(staticItems);
+  rb.innerHTML = '<ol class="reco-list">' + items.map(i =>
+    '<li><span style="color:var(--muted);font-size:13.5px">' + esc(i) + '</span></li>').join('') + '</ol>';
+  $('navSession').textContent = 'Session ' + (state.sessionId || '—');
+  $('metaSession').textContent = state.sessionId || '—';
+  $('metaPolicy').textContent = state.policyLabel || '—';
+}
+
 /* --------------------------------------------------------------- result view */
 function showResult(res, policyId) {
   const m = state.meta || {};
-  const tau = m.tau != null ? m.tau : null;
   const p = res.p_hat;
 
   $('quizScreen').hidden = true;
   $('resultScreen').hidden = false;
 
   $('resValue').textContent = num(p, 3);
-  $('resLabel').textContent = 'Screening risk estimate (model score)';
-  $('resTau').textContent = tau != null ? String(tau) : '—';
-  $('resMark').style.left = (Math.max(0, Math.min(1, p)) * 100) + '%';
+  $('resLabel').textContent = 'Screening risk estimate';
+  // (scale marker removed; tau shown as metadata next to the scale.)
+  syncDash(res);
+  // navigation highlight
+  document.querySelectorAll('nav.topnav a').forEach(a =>
+    a.classList.toggle('active', a.dataset.nav === 'explain'));
 
   const isRef = res.decision === 'REFERRAL_RECOMMENDED';
   $('resDecision').innerHTML =

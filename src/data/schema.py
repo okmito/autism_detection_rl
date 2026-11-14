@@ -4,6 +4,17 @@ import numpy as np
 from typing import Dict, Any
 
 VALID_LABEL_SOURCES = {"questionnaire", "clinical"}
+#: Honest provenance categories for synthetic/simulated records. These are
+#: research/test fixtures only: they are NEVER questionnaire-derived or
+#: independent clinical labels and must never be merged with them. The
+#: distinction is enforced by ``validate_record`` via the
+#: ``provenance`` prefix (``synthetic*`` / ``simulated*``) required on
+#: every such record.
+VALID_SYNTHETIC_SOURCES = {"synthetic", "simulated"}
+VALID_ALL_SOURCES = VALID_LABEL_SOURCES | VALID_SYNTHETIC_SOURCES | {"unverified"}
+#: Minimal covariates for synthetic/simulated records: the simulator is not
+#: required to fabricate age_band/sex demographics it does not generate.
+_SYNTHETIC_COVARIATE_KEYS = {"age_band", "sex"}
 VALID_SEX = {"M", "F", "unknown", "other"}
 # age_band is free-form string but must be present
 
@@ -36,12 +47,38 @@ def validate_record(rec: Dict[str, Any], n_items: int | None = None) -> None:
     if label not in (0, 1):
         raise ValueError(f"label must be 0 or 1, got {label}")
 
-    if rec["label_source"] not in VALID_LABEL_SOURCES:
-        raise ValueError(f"Invalid label_source: {rec['label_source']}")
+    label_source = rec["label_source"]
+    provenance = str(rec.get("provenance", ""))
+    is_synthetic = label_source in VALID_SYNTHETIC_SOURCES
+    if label_source not in VALID_ALL_SOURCES:
+        raise ValueError(f"Invalid label_source: {label_source}")
+    if is_synthetic:
+        if not provenance.startswith(("synthetic", "simulated")):
+            raise ValueError(
+                f"Synthetic/simulated records must carry a 'synthetic' or "
+                f"'simulated' provenance prefix, got provenance={provenance!r} "
+                f"label_source={label_source!r}"
+            )
+    elif provenance.startswith(("synthetic", "simulated")):
+        raise ValueError(
+            f"Provenance {provenance!r} marks a synthetic/simulated record but "
+            f"label_source={label_source!r} is not synthetic/simulated; "
+            "synthetic records must be labelled synthetic/simulated, never "
+            "questionnaire/clinical"
+        )
+    if label_source == "unverified":
+        raise ValueError(
+            "'unverified' labels are not usable for training/evaluation; "
+            "mark-and-freeze instead of validating as real"
+        )
 
     cov = rec["covariates"]
-    if not isinstance(cov, dict) or "age_band" not in cov or "sex" not in cov:
-        raise ValueError("covariates must contain age_band and sex")
+    if is_synthetic:
+        if not isinstance(cov, dict) or not _SYNTHETIC_COVARIATE_KEYS <= cov.keys():
+            raise ValueError("synthetic/simulated records must contain age_band and sex covariates")
+    else:
+        if not isinstance(cov, dict) or "age_band" not in cov or "sex" not in cov:
+            raise ValueError("covariates must contain age_band and sex")
 
     # missing entries must be NaN in item_responses
     for i in range(len(ir)):

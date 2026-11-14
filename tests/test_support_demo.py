@@ -228,3 +228,58 @@ def test_support_state_resets_with_the_session():
                 html.find("function resetAll") + 1600]
     assert "$('resSupportBody').innerHTML = ''" in body
     assert "$('resSupportBox').removeAttribute('open');" in body
+
+
+# ------------------------------------------------ bounded session store and locked counter (audit T12)
+
+
+def test_demo_sessions_are_capped_and_finished_ones_are_evicted_first():
+    demo = _load_demo_app()
+
+    class Fake:
+        def __init__(self, finished):
+            self.finished = finished
+
+    demo.MAX_SESSIONS = 5
+    demo.S["sessions"].clear()
+    demo.register_session("busy_oldest", Fake(False))
+    for i in range(4):
+        demo.register_session(f"done{i}", Fake(True))
+    demo.register_session("new", Fake(False))
+    keys = list(demo.S["sessions"])
+    assert len(keys) == 5 and "busy_oldest" in keys, "an unfinished session outlives finished ones"
+    assert "done0" not in keys and "new" in keys
+    for i in range(10):
+        demo.register_session(f"x{i}", Fake(False))
+    assert len(demo.S["sessions"]) == 5 and "x9" in demo.S["sessions"], "the newest is never evicted"
+
+
+def test_demo_record_counter_is_not_lost_under_threads():
+    import threading
+    import time
+    demo = _load_demo_app()
+
+    class Yielding(dict):
+        """Hand the CPU to another thread right after the counter is read, which is where an unlocked
+        read-modify-write loses updates. A plain dict makes that race too rare to catch reliably."""
+        def __getitem__(self, key):
+            value = super().__getitem__(key)
+            if key == "counter":
+                time.sleep(0.0001)
+            return value
+
+    demo.S = Yielding(demo.S)
+    demo.S["counter"] = 0
+    seen, lock = [], threading.Lock()
+
+    def work():
+        for _ in range(25):
+            i = demo.next_record_index(7)
+            with lock:
+                seen.append(i)
+
+    ts = [threading.Thread(target=work) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert demo.S["counter"] == 200, "every increment must be counted"
+    assert all(0 <= i < 7 for i in seen)

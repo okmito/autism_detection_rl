@@ -1,0 +1,11 @@
+# Everything needed to run the test suite: `pip install -r requirements-dev.txt`
+-r requirements.txt
+pytest>=7.0
+
+# Optional extras. Tests/scripts that need them skip or degrade when absent:
+#   pyreadstat - reads the gitignored SPSS .sav files (src/data/provenance.py, tests/test_qchat10_contract.py)
+#   matplotlib - figure output in scripts/step16_fixed_budget_external.py
+#   psutil     - memory reporting in src/solvers/exact_custom.py
+# pyreadstat>=1.2
+# matplotlib>=3.7
+# psutil>=5.9

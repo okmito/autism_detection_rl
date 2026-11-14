@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 import numpy as np
 from scipy.stats import rankdata
 
-__all__ = ["auroc", "paired_auroc_comparison", "holm_adjust"]
+__all__ = ["auroc", "auroc_rows", "bootstrap_core_metrics", "paired_auroc_comparison", "holm_adjust"]
 
 
 def auroc(y: Sequence[int], s: Sequence[float]) -> float:
@@ -30,6 +30,58 @@ def auroc(y: Sequence[int], s: Sequence[float]) -> float:
         return float("nan")
     ranks = rankdata(s, method="average")
     return float((ranks[y == 1].sum() - n1 * (n1 + 1) / 2.0) / (n1 * n0))
+
+
+def auroc_rows(y: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """Tie-aware AUROC of every row of ``(B, n)`` arrays at once (NaN for rows missing a class)."""
+    y = np.asarray(y, dtype=int)
+    s = np.asarray(s, dtype=float)
+    n1 = y.sum(axis=1).astype(float)
+    n0 = y.shape[1] - n1
+    ranks = rankdata(s, method="average", axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = ((ranks * y).sum(axis=1) - n1 * (n1 + 1) / 2.0) / (n1 * n0)
+    out[(n1 == 0) | (n0 == 0)] = np.nan
+    return out
+
+
+def bootstrap_core_metrics(y: Sequence[int], p: Sequence[float], tau: float = 0.5, n_bootstrap: int = 2000,
+                           seed: int = 0, chunk: int = 256) -> Dict[str, np.ndarray]:
+    """Bootstrap draws of Brier, AUROC and UAR (balanced accuracy at ``tau``), vectorised.
+
+    Draws the same resample indices, in the same order, as ``rng.integers(0, n, size=n)`` called once per
+    resample, so results match the loop this replaces (checked in tests/test_eval_metrics.py). Brier needs
+    no class balance; AUROC and UAR are *undefined* for a resample that contains one class, so those entries
+    are NaN and callers drop them with ``nanpercentile`` and report how many survived. Processed in chunks to
+    bound memory (``chunk`` x n floats).
+    """
+    y = np.asarray(y, dtype=int)
+    p = np.asarray(p, dtype=float)
+    n = y.size
+    if n == 0 or n != p.size:
+        raise ValueError("y and p must be non-empty and the same length")
+    rng = np.random.default_rng(seed)
+    brier = np.empty(n_bootstrap)
+    auc = np.empty(n_bootstrap)
+    uar = np.empty(n_bootstrap)
+    pred = (p >= tau).astype(int)
+    done = 0
+    while done < n_bootstrap:
+        b = min(chunk, n_bootstrap - done)
+        idx = rng.integers(0, n, size=(b, n))
+        ys, ps, pr = y[idx], p[idx], pred[idx]
+        brier[done:done + b] = ((ps - ys) ** 2).mean(axis=1)
+        auc[done:done + b] = auroc_rows(ys, ps)
+        n1 = ys.sum(axis=1).astype(float)
+        n0 = n - n1
+        tp = ((pr == 1) & (ys == 1)).sum(axis=1)
+        tn = ((pr == 0) & (ys == 0)).sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            u = 0.5 * (tp / n1 + tn / n0)
+        u[(n1 == 0) | (n0 == 0)] = np.nan
+        uar[done:done + b] = u
+        done += b
+    return {"brier": brier, "auroc": auc, "uar": uar}
 
 
 def paired_auroc_comparison(y: Sequence[int], a: Sequence[float],

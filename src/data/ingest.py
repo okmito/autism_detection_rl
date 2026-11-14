@@ -19,10 +19,29 @@ UCI_CHILD_ARFF = Path(r"data/raw/UCI/Autism-Child-Data.arff")
 NZ_TODDLER_CSV = Path(r"data/raw/Q-CHAT NZ/Toddler Autism dataset July 2018.csv")
 NZ_COMBINED_CSV = Path(r"data/raw/Q-CHAT NZ/Autism_Screening_Data_Combined.csv")  # 6075 pooled — NOT primary cohort
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _abs(path: Path) -> Path:
+    """Anchor a repo-relative data path to the repository root.
+
+    The constants above stay repo-relative (scripts record them in artifacts), but *reading* them must not
+    depend on the process working directory (audit finding T5): that is why importing the web app used to
+    ``os.chdir`` into the repo.
+    """
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
 # ---------------------------------------------------------------------------
 # Binary mapping for Q-CHAT-10 primary representation (§15)
 # ---------------------------------------------------------------------------
-def _synthetic_records(n: int, n_items: int, label_source: str = "questionnaire", seed: int = 0) -> List[Dict[str, Any]]:
+def _synthetic_records(n: int, n_items: int, label_source: str = "synthetic", seed: int = 0) -> List[Dict[str, Any]]:
+    """Research-only synthetic fixtures. They are NEVER real questionnaire or
+    clinical data and must never be merged with them (see schema.py)."""
+    if label_source not in ("synthetic", "simulated"):
+        raise ValueError(
+            f'_synthetic_records only produces synthetic/simulated labels, got {label_source!r}'
+        )
     rng = np.random.default_rng(seed)
     records = []
     for _ in range(n):
@@ -47,9 +66,9 @@ def _synthetic_records(n: int, n_items: int, label_source: str = "questionnaire"
 def load_nz(synthetic: bool = False, **kwargs) -> List[Dict[str, Any]]:
     """NZ Q-CHAT-10 — 1,054 rows (spec §15: 728/326). Requires V-1."""
     if synthetic:
-        return _synthetic_records(1054, 10, "questionnaire", seed=1)
-    if NZ_TODDLER_CSV.exists():
-        return _load_nz_toddler_csv(NZ_TODDLER_CSV)
+        return _synthetic_records(1054, 10, "synthetic", seed=1)
+    if _abs(NZ_TODDLER_CSV).exists():
+        return _load_nz_toddler_csv(_abs(NZ_TODDLER_CSV))
     raise FileNotFoundError(
         "HUMAN ACTION REQUIRED — NZ primary cohort missing: "
         f"Expected 1,054-row file at '{NZ_TODDLER_CSV}' (Toddler Autism dataset July 2018.csv). "
@@ -72,9 +91,9 @@ def _load_nz_toddler_csv(path: Path) -> List[Dict[str, Any]]:
 def load_saudi(synthetic: bool = False, **kwargs) -> List[Dict[str, Any]]:
     """Saudi Q-CHAT-10 — 506 rows (spec §15). Verified at SAUDI_CSV."""
     if synthetic:
-        return _synthetic_records(506, 10, "questionnaire", seed=2)
-    if SAUDI_CSV.exists():
-        return _load_saudi_csv(SAUDI_CSV)
+        return _synthetic_records(506, 10, "synthetic", seed=2)
+    if _abs(SAUDI_CSV).exists():
+        return _load_saudi_csv(_abs(SAUDI_CSV))
     raise FileNotFoundError(f"HUMAN ACTION REQUIRED: Saudi CSV not found at '{SAUDI_CSV}'.")
 
 
@@ -148,9 +167,9 @@ def load_polish(synthetic: bool = False, **kwargs) -> List[Dict[str, Any]]:
     qchat4 value '11.0' is treated as invalid data value and logged, not silently converted.
     """
     if synthetic:
-        return _synthetic_records(252, 25, "clinical", seed=6)
-    if POLISH_CSV.exists():
-        return _load_polish_csv(POLISH_CSV)
+        return _synthetic_records(252, 25, "synthetic", seed=6)
+    if _abs(POLISH_CSV).exists():
+        return _load_polish_csv(_abs(POLISH_CSV))
     raise FileNotFoundError(f"HUMAN ACTION REQUIRED: Polish CSV not found at '{POLISH_CSV}'.")
 
 
@@ -234,9 +253,9 @@ def get_polish_invalid_log() -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 def load_uci_child(synthetic: bool = False, **kwargs) -> List[Dict[str, Any]]:
     if synthetic:
-        return _synthetic_records(292, 10, "questionnaire", seed=3)
-    if UCI_CHILD_ARFF.exists():
-        return _load_uci_arff(UCI_CHILD_ARFF)
+        return _synthetic_records(292, 10, "synthetic", seed=3)
+    if _abs(UCI_CHILD_ARFF).exists():
+        return _load_uci_arff(_abs(UCI_CHILD_ARFF))
     raise FileNotFoundError(f"HUMAN ACTION REQUIRED: UCI Child ARFF not found at '{UCI_CHILD_ARFF}'.")
 
 
@@ -308,13 +327,13 @@ def _load_uci_arff(path: Path) -> List[Dict[str, Any]]:
 
 def load_uci_adol(synthetic: bool = False, **kwargs) -> List[Dict[str, Any]]:
     if synthetic:
-        return _synthetic_records(104, 10, "questionnaire", seed=4)
+        return _synthetic_records(104, 10, "synthetic", seed=4)
     raise FileNotFoundError("HUMAN ACTION REQUIRED — UCI Adolescent 104-row ARFF not present locally (spec §15: UCI AQ-10 adolescent). Place at data/raw/UCI/Autism-Adolescent-Data.arff.")
 
 
 def load_uci_adult(synthetic: bool = False, **kwargs) -> List[Dict[str, Any]]:
     if synthetic:
-        return _synthetic_records(704, 10, "questionnaire", seed=5)
+        return _synthetic_records(704, 10, "synthetic", seed=5)
     raise FileNotFoundError("HUMAN ACTION REQUIRED — UCI Adult 704-row ARFF not present locally (spec §15: UCI AQ-10 adult). Place at data/raw/UCI/Autism-Adult-Data.arff.")
 
 
