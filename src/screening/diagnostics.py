@@ -18,7 +18,15 @@ ITEMS = [item.question_text for item in _QCHAT_ITEMS]
 
 
 def item_payload(j: int) -> dict:
-    return {"index": int(j), "code": f"A{j + 1}", "text": ITEMS[int(j)]}
+    """A question as the frontends render it, including its answer options.
+
+    ``options`` carries the instrument's printed wording and the scored binary value of each option, so a
+    frontend never has to know an item's polarity (audit finding C1: "Yes / atypical" buttons inverted
+    items 1-9, whose "Yes" is the typical answer).
+    """
+    item = _QCHAT_ITEMS[int(j)]
+    return {"index": int(j), "code": f"A{j + 1}", "text": ITEMS[int(j)],
+            "options": [dict(o) for o in item.response_options]}
 
 
 # --------------------------------------------------------------------------

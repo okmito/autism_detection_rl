@@ -117,7 +117,23 @@ def test_replayed_diagnostics_only_for_greedy():
 def test_item_payload_matches_the_questionnaire_contract():
     assert len(ITEMS) == N
     p = item_payload(0)
-    assert p == {"index": 0, "code": "A1", "text": ITEMS[0]}
+    assert {k: p[k] for k in ("index", "code", "text")} == {"index": 0, "code": "A1", "text": ITEMS[0]}
+    assert p["options"] == [{"letter": "A", "label": "Always", "value": 0},
+                            {"letter": "B", "label": "Usually", "value": 0},
+                            {"letter": "C", "label": "Sometimes", "value": 1},
+                            {"letter": "D", "label": "Rarely", "value": 1},
+                            {"letter": "E", "label": "Never", "value": 1}]
+
+
+def test_every_question_payload_carries_its_scored_options():
+    """Audit C1: a frontend must never need to know an item's polarity, so the payload carries it."""
+    from src.data.qchat10_contract import QCHAT10_SCORED_LETTERS
+    for j in range(N):
+        p = item_payload(j)
+        assert [o["letter"] for o in p["options"]] == list("ABCDE")
+        scored = QCHAT10_SCORED_LETTERS[j + 1]
+        assert all(o["value"] == int(o["letter"] in scored) for o in p["options"]), p["code"]
+        assert not any(o["label"].lower() in ("yes", "no") for o in p["options"]), p["code"]
 
 
 def test_selection_summary_handles_empty_and_diagnosed_traces():

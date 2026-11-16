@@ -119,3 +119,31 @@ def test_every_asked_item_is_covered_or_disclosed():
 
 def test_questionnaire_version_is_the_contracts():
     assert questionnaire_version() == "qchat10-mapping/2.0.0"
+
+
+# ---------------------------------------------------------------------------
+# answer polarity (audit finding C1)
+# ---------------------------------------------------------------------------
+
+def test_answer_options_score_by_the_official_rule_not_by_yes_no():
+    """The UI used to offer "Yes / atypical" = 1 for every item. For A1-A9 the question is phrased so that a
+    literal "Yes" is the *typical* answer, so 9 of 10 answers were inverted. Each item now offers the
+    instrument's printed options, scored by the official Q-CHAT-10 rule (items 1-9: C/D/E = 1; item 10:
+    A/B/C = 1)."""
+    by_code = {i.item_code: {o["label"]: o["value"] for o in i.response_options} for i in ITEMS}
+    # the typical end of A1-A9 is "never atypical"; the atypical end is atypical
+    assert by_code["A1"]["Always"] == 0 and by_code["A1"]["Never"] == 1
+    assert by_code["A1"]["Sometimes"] == 1                         # the official cut-off, not a yes/no split
+    assert by_code["A2"]["Very easy"] == 0 and by_code["A2"]["Impossible"] == 1
+    assert by_code["A8"]["Very typical"] == 0 and by_code["A8"]["My child does not speak"] == 1
+    for code in ("A3", "A4", "A5", "A6", "A9"):
+        assert by_code[code]["Many times a day"] == 0 and by_code[code]["Never"] == 1, code
+    # A10 (staring at nothing) is reversed: doing it often is the atypical answer
+    assert by_code["A10"]["Many times a day"] == 1 and by_code["A10"]["A few times a week"] == 1
+    assert by_code["A10"]["Less than once a week"] == 0 and by_code["A10"]["Never"] == 0
+
+
+def test_every_item_offers_both_a_typical_and_an_atypical_option():
+    for item in ITEMS:
+        values = [o["value"] for o in item.response_options]
+        assert len(values) == 5 and set(values) == {0, 1}, item.item_code

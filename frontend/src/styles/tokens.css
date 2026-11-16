@@ -1,0 +1,152 @@
+/* NeuroBridge design tokens: soft ivory, white surfaces, one cobalt.
+   Every colour in the app comes from here; components never hard-code one.
+   Hierarchy is carried by type, weight and whitespace; a white raised surface is used
+   only where something is genuinely held (a form, the live question, an evidence rail). */
+
+:root {
+  /* spacing (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* radii */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  /* type: Geist, bundled (CSP font-src 'self') */
+  --font-sans: 'Geist Variable', 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-xs: 0.8125rem;   /* 13: meta, badges, captions */
+  --text-sm: 0.875rem;    /* 14: table cells, secondary text */
+  --text-md: 0.9375rem;   /* 15: body */
+  --text-lg: 1.0625rem;   /* 17: lead text, list titles */
+  --text-xl: 1.375rem;    /* 22: section headings */
+  --text-2xl: 1.875rem;   /* 30: page titles */
+  --text-3xl: 2.75rem;    /* 44: the welcome and the result */
+  --text-q: clamp(1.5rem, 1.05rem + 1.5vw, 2.125rem); /* 24 to 34: the live question */
+  --leading-tight: 1.2;
+  --leading-body: 1.6;
+
+  /* motion */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --t-fast: 120ms var(--ease);
+  --t-base: 200ms var(--ease);
+  --t-slow: 360ms var(--ease);
+
+  --side-w: 256px;
+  --sidebar-w: var(--side-w);
+  --content-max: 1180px;
+  --z-sticky: 20;
+  --z-drawer: 40;
+  --z-modal: 60;
+  --z-toast: 80;
+}
+
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* ground, sidebar and surfaces */
+  --bg: #f8f6f1;
+  --bg-inset: #f0ede4;
+  --side: #f2efe7;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-hover: #f4f1ea;
+  --track: #e6e2d7;
+  --border: #e9e5db;
+  --border-strong: #cdc7b8;
+
+  --text: #16181d;
+  --text-muted: #555a66;
+  --text-faint: #6a6f7c;
+  --text-on-accent: #ffffff;
+
+  /* cobalt */
+  --accent: #1f48c8;
+  --accent-hover: #1a3bab;
+  --accent-soft: #e9eefc;
+  --accent-ink: #1a3bab;
+  --accent-secondary: #8aa0e8;
+  --disc: #1f48c8;
+
+  --good: #0e7449;
+  --good-soft: #e3f2ea;
+  --warn: #8a5300;
+  --warn-soft: #faefd6;
+  --danger: #b42318;
+  --danger-soft: #fbe6e3;
+  --danger-solid: #b42318;
+
+  /* risk scale halves */
+  --scale-low: #e4eafa;
+  --scale-high: #f5e3dd;
+  --viz-neg: #c0624a;
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px #1f48c8;
+  --selection: #cfdaf8;
+
+  /* depth: soft, two-layer, only on raised things */
+  --shadow-sm: 0 1px 2px rgba(22, 24, 29, 0.05), 0 1px 1px rgba(22, 24, 29, 0.03);
+  --shadow-md: 0 1px 2px rgba(22, 24, 29, 0.05), 0 8px 24px -10px rgba(22, 24, 29, 0.14);
+  --shadow-lg: 0 2px 6px rgba(22, 24, 29, 0.08), 0 24px 48px -16px rgba(22, 24, 29, 0.28);
+  --shadow-press: inset 0 1px 2px rgba(22, 24, 29, 0.12);
+  --scrim: rgba(22, 24, 29, 0.38);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #0d1117;
+  --bg-inset: #141a23;
+  --side: #10151d;
+  --surface: #161d27;
+  --surface-raised: #1b2431;
+  --surface-hover: #1c2531;
+  --track: #263140;
+  --border: #232d3a;
+  --border-strong: #3b495b;
+
+  --text: #e8ecf2;
+  --text-muted: #a8b2c0;
+  --text-faint: #94a0b0;
+  --text-on-accent: #0a1330;
+
+  --accent: #8aa6ff;
+  --accent-hover: #a6bbff;
+  --accent-soft: #1a2747;
+  --accent-ink: #a9bdff;
+  --accent-secondary: #4b66c4;
+  --disc: #4d6fe0;
+
+  --good: #5fcb9b;
+  --good-soft: #112a21;
+  --warn: #f0c36a;
+  --warn-soft: #2d2412;
+  --danger: #ff9488;
+  --danger-soft: #341a18;
+  --danger-solid: #c8372c;
+
+  --scale-low: #1b2a4d;
+  --scale-high: #43241f;
+  --viz-neg: #e58a72;
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px #8aa6ff;
+  --selection: #2b4180;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -10px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.5), 0 28px 56px -16px rgba(0, 0, 0, 0.75);
+  --shadow-press: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --scrim: rgba(3, 6, 12, 0.66);
+}

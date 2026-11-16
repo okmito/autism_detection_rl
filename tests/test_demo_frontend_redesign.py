@@ -192,16 +192,25 @@ def test_reset_does_not_call_a_backend_endpoint(html):
 
 # ==================================================== answers / double submit
 def test_answer_buttons_are_semantic_and_labelled(html):
-    assert 'data-value="0"' in html
-    assert 'data-value="1"' in html
-    assert "No / typical" in html
-    assert "Yes / atypical" in html
-    assert html.count('class="ansbtn"') == 2
+    """Answers are the instrument's own options sent by the backend, each with its scored value.
+
+    The old fixed "No / typical" / "Yes / atypical" pair inverted items A1-A9, whose literal "Yes" is the
+    typical answer (audit finding C1). The buttons must be built from ``q.options`` and nothing else.
+    """
+    assert "Yes / atypical" not in html and "No / typical" not in html
+    assert 'id="answers" role="group" aria-label="Answer options"' in html
+    body = html[html.find("function renderAnswerOptions"):html.find("function setAnswersEnabled")]
+    assert "q.options" in body and "o.value" in body and "esc(o.label)" in body
+    assert '<button class="ansbtn"' in body and 'type="button"' in body
+    assert "renderAnswerOptions(q)" in html
 
 
 def test_answer_values_unchanged(html):
-    """0/1 encoding must not be altered by a UI change."""
-    assert "value: 0" in html or "data-value=\"0\"" in html
+    """0/1 encoding must not be altered by a UI change: each button carries the backend's scored value of its
+    option (only 0 or 1 is accepted) and the click handler sends that number unchanged."""
+    body = html[html.find("function renderAnswerOptions"):html.find("function setAnswersEnabled")]
+    assert "o.value === 0 || o.value === 1" in body
+    assert "data-value=\"' + o.value" in body
     assert "Number(b.dataset.value)" in html
 
 
