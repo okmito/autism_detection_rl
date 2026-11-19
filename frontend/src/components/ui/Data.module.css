@@ -1,0 +1,49 @@
+/* Tables sit on a white surface; lists and key-values stay open on the page. */
+.tableWrap { overflow: auto; border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
+.table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.table th, .table td { padding: 11px 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody tr { transition: background-color var(--t-fast); }
+.table tbody tr:hover td { background: var(--surface-hover); }
+.table th { position: sticky; top: 0; background: var(--bg-inset); font-size: var(--text-xs); font-weight: 550; color: var(--text-muted); white-space: nowrap; }
+
+.list { display: grid; gap: var(--space-6); }
+.listDense { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5) var(--space-8); }
+.listDense .itemTitle { font-size: var(--text-md); }
+.listDense .itemBody { font-size: var(--text-sm); }
+.item { display: grid; gap: 6px; }
+.itemTitle { font-size: var(--text-lg); font-weight: 600; letter-spacing: -0.01em; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.itemBody { color: var(--text-muted); font-size: var(--text-md); display: grid; gap: 4px; max-width: 72ch; }
+.itemBody strong { color: var(--text); font-weight: 600; }
+.itemActions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: 6px; }
+
+.kv { margin: 0; display: grid; gap: var(--space-1); font-size: var(--text-sm); }
+.kvRow { display: grid; grid-template-columns: minmax(120px, 200px) 1fr; gap: var(--space-3); padding: 6px 0; }
+.kvRow dt { color: var(--text-muted); } .kvRow dd { margin: 0; font-weight: 500; }
+
+/* Diverging bars: one shared scale, a zero axis, raise to the right, lower to the left. */
+.bars { display: grid; gap: var(--space-3); }
+.barRow { display: grid; grid-template-columns: minmax(90px, 170px) 1fr 76px; gap: var(--space-4); align-items: center; font-size: var(--text-sm); }
+.barLabel { font-weight: 500; }
+.barTrack { position: relative; height: 10px; border-radius: var(--radius-pill); background: var(--bg-inset); }
+.barAxis { position: absolute; top: -4px; bottom: -4px; width: 1.5px; margin-left: -0.75px; background: var(--border-strong); }
+.barFill { position: absolute; top: 0; bottom: 0; border-radius: var(--radius-pill); background: var(--accent); transition: width var(--t-slow); }
+.neg { background: var(--viz-neg); }
+.barValue { text-align: right; color: var(--text-muted); font-size: var(--text-xs); }
+.barKey { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); font-size: var(--text-xs); color: var(--text-muted); }
+.barKey span { display: inline-flex; align-items: center; gap: 6px; }
+.barKey i { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
+.barKey i.negKey { background: var(--viz-neg); }
+
+.row { display: flex; flex-wrap: wrap; align-items: center; }
+.grid { display: grid; gap: var(--space-8); }
+.cols2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cols3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cols4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.split { display: grid; grid-template-columns: minmax(0, var(--side-col, 400px)) minmax(0, 1fr); gap: var(--space-12); align-items: start; }
+.formStack { display: grid; gap: var(--space-4); }
+.mono { margin: 0; padding: var(--space-4); max-height: 360px; overflow: auto; font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.6; white-space: pre-wrap; background: var(--bg-inset); border-radius: var(--radius-md); }
+@media (max-width: 1100px) { .cols4, .cols3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .split { grid-template-columns: minmax(0, 1fr); gap: var(--space-8); } }
+@media (max-width: 1280px) { .listDense { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) { .cols2, .cols3, .cols4 { grid-template-columns: minmax(0, 1fr); } .kvRow { grid-template-columns: 1fr; gap: 0; } .barRow { grid-template-columns: 1fr 64px; gap: var(--space-2) var(--space-3); } .barTrack { grid-column: 1 / -1; order: 3; } }

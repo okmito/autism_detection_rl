@@ -1,0 +1,14 @@
+/* A callout is a tinted, soft surface with a drawn icon: no side bars. */
+.notice { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--bg-inset); color: var(--text); font-size: var(--text-sm); line-height: 1.55; }
+.icon { flex: none; margin-top: 2px; }
+.body { min-width: 0; }
+.body ul { margin: 0; }
+.neutral .icon { color: var(--text-muted); }
+.accent { background: var(--accent-soft); }
+.accent .icon { color: var(--accent-ink); }
+.good { background: var(--good-soft); }
+.good .icon { color: var(--good); }
+.warn { background: var(--warn-soft); }
+.warn .icon { color: var(--warn); }
+.danger { background: var(--danger-soft); }
+.danger .icon { color: var(--danger); }

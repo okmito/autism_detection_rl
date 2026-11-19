@@ -198,7 +198,7 @@
   }
   .qtext{font-size:19px;line-height:1.45;font-weight:500;letter-spacing:-.005em;margin-bottom:22px}
 
-  .answers{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .answers{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
   @media(max-width:520px){.answers{grid-template-columns:1fr}}
   .ansbtn{
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
@@ -424,14 +424,9 @@
       <span class="qcode" id="qCode">Q1</span>
     </div>
     <h2 class="qtext" id="qText" style="font:inherit">—</h2>
-    <div class="answers" id="answers">
-      <button class="ansbtn" data-value="0" type="button">
-        <span class="v">No / typical</span><span class="m">value 0</span>
-      </button>
-      <button class="ansbtn" data-value="1" type="button">
-        <span class="v">Yes / atypical</span><span class="m">value 1</span>
-      </button>
-    </div>
+    <!-- Filled per question from the backend's options (the instrument's own wording, each with its
+         scored value). Never "Yes/No": for A1-A9 a literal "Yes" is the typical answer. -->
+    <div class="answers" id="answers" role="group" aria-label="Answer options"></div>
     <div class="bar"><i id="progBar"></i></div>
     <div class="status" id="status" role="status" aria-live="polite"></div>
 
@@ -833,10 +828,19 @@ function showQuestion(q, askedSoFar, beliefNote) {
     (budget != null ? ' of ' + budget : '');
   $('qCode').textContent = q.code;
   $('qText').textContent = q.text;
+  renderAnswerOptions(q);
   state.lastQuestionCode = q.code;
   const pct = (budget ? Math.min(100, (askedSoFar / budget) * 100) : 0);
   $('progBar').style.width = pct + '%';
   if (beliefNote) setStatus(beliefNote, false);
+}
+function renderAnswerOptions(q) {
+  const opts = (q && Array.isArray(q.options)) ? q.options.filter(o => o.value === 0 || o.value === 1) : [];
+  $('answers').innerHTML = opts.length
+    ? opts.map(o => '<button class="ansbtn" data-value="' + o.value + '" data-letter="' + esc(o.letter) +
+        '" type="button"><span class="v">' + esc(o.label) + '</span><span class="m">' +
+        (o.value === 1 ? 'scored atypical (value 1)' : 'scored typical (value 0)') + '</span></button>').join('')
+    : '<p class="status">Answer options for this question are unavailable. Reload the page to continue.</p>';
 }
 function setAnswersEnabled(on) {
   document.querySelectorAll('.ansbtn').forEach(b => { b.disabled = !on; });

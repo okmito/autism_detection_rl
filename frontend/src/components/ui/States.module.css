@@ -1,0 +1,11 @@
+/* An empty state is a calm sentence with a small drawn icon, not an empty panel. */
+.empty { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-8) var(--space-4); color: var(--text-muted); text-align: center; font-size: var(--text-md); }
+.empty p { max-width: 44ch; }
+.emptyIcon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--accent-ink); }
+.spinner { display: inline-flex; align-items: center; color: var(--text-muted); }
+.spin { animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading { display: grid; gap: var(--space-4); }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--space-4); }
+.skeleton { border-radius: var(--radius-md); background: linear-gradient(100deg, var(--bg-inset) 30%, var(--surface-hover) 50%, var(--bg-inset) 70%); background-size: 200% 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }

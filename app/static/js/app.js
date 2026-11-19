@@ -184,9 +184,8 @@
       <div class="row" style="justify-content:space-between"><div><span class="badge">${esc(sess.policy)}</span> <span class="badge">Session ${esc(sess.session_id)}</span></div><div class="muted tiny">${isRL ? `Questions ${asked} (agent decides when to stop; at most ${budget})` : `Budget ${asked}/${budget}`} · τ=${fmt(sess.tau||0.5,2)}</div></div>
       <div class="progress" style="margin:10px 0"><i style="width:${pct}%"></i></div>
       ${q ? `<div class="card" style="background:var(--bg-soft);box-shadow:none"><div class="muted tiny">Next question (selected by policy)</div><h3 style="margin:6px 0 4px">${esc(q.code)}: ${esc(q.text)}</h3>
-        <div class="row" style="margin-top:10px">
-          <button class="btn" data-ans="1">Yes / Atypical response</button>
-          <button class="btn secondary" data-ans="0">No / Typical response</button>
+        <div class="row" style="margin-top:10px" role="group" aria-label="Answer options">
+          ${answerButtons(q)}
           ${isRL ? `<button class="btn ghost" id="skipBtn">Prefer not to answer</button>` : ''}
           <button class="btn ghost" id="stopBtn">Stop & show result</button>
         </div></div>` : `<div class="empty">No pending question.</div>`}
@@ -198,6 +197,15 @@
     $$('[data-ans]').forEach(b=>b.onclick=()=>submitAnswer(sess.session_id, Number(b.dataset.ans), false, q ? q.index : null));
     const stopBtn = $('#stopBtn'); if(stopBtn) stopBtn.onclick=()=>submitAnswer(sess.session_id, null, true);
     const skipBtn = $('#skipBtn'); if(skipBtn) skipBtn.onclick=()=>submitAnswer(sess.session_id, null, false, q ? q.index : null, true);
+  }
+
+  // The person answers in the instrument's own wording; the backend sends each option's scored value
+  // (src/support/questionnaire.py response_options). Never "Yes/No": for A1-A9 a literal "Yes" is the
+  // typical answer, for A10 the atypical one. Without options there is nothing safe to offer.
+  function answerButtons(q){
+    const opts = (q && Array.isArray(q.options)) ? q.options.filter(o=>o.value===0 || o.value===1) : [];
+    if(!opts.length) return `<div class="notice warn">Answer options for this question are unavailable. Reload the page to continue.</div>`;
+    return opts.map(o=>`<button class="btn secondary" data-ans="${o.value}" data-letter="${esc(o.letter)}">${esc(o.label)}</button>`).join('');
   }
 
   function rlAvailabilityText(info){

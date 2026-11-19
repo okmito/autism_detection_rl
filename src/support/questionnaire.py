@@ -40,7 +40,9 @@ from typing import Dict, List, Tuple
 from src.data.qchat10_contract import (MODEL_FEATURE_ORDER,
                                        ORDINAL_VERIFICATION,
                                        QCHAT10_SCORING_DIRECTION,
-                                       QCHAT_MAPPING_VERSION)
+                                       QCHAT25_PRINTED_OPTIONS_EN,
+                                       QCHAT_MAPPING_VERSION,
+                                       binary_for_letter)
 
 #: Answer values the instrument produces (binary projection, contract §6).
 ATYPICAL_VALUE = 1
@@ -86,6 +88,21 @@ class QuestionnaireItem:
     @property
     def typical_value(self) -> int:
         return TYPICAL_VALUE
+
+    @property
+    def response_options(self) -> Tuple[Dict[str, object], ...]:
+        """The instrument's printed answer options for this item, each with its scored binary value.
+
+        The person answers with the instrument's own wording ("Always" .. "Never", "Very easy" ..
+        "Impossible", ...) and the value comes from the official Q-CHAT-10 rule
+        (:func:`~src.data.qchat10_contract.binary_for_letter`). A plain "Yes"/"No" cannot be used:
+        for items 1-9 a literal "Yes" is the *typical* answer, for item 10 it is the atypical one.
+        """
+        options = QCHAT25_PRINTED_OPTIONS_EN[self.qchat25_item]
+        return tuple({"letter": letter,
+                      "label": text[:1].upper() + text[1:],
+                      "value": binary_for_letter(letter, self.qchat10_item)}
+                     for letter, text in zip("ABCDE", options))
 
     def answer_label(self, response: int) -> str:
         """Human wording for a recorded binary answer."""

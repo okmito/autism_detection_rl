@@ -220,7 +220,9 @@ def test_html_in_report_text_is_escaped(tmp_path):
 # ============================================================ answer flow (audit finding I2) and privacy controls (C5)
 
 def screening_api(question_index, extra=None):
-    q = {"index": question_index, "code": f"A{question_index + 1}", "text": f"Question text {question_index + 1}"}
+    # The real backend payload, options included (the frontend renders the answers from them).
+    from src.screening.diagnostics import item_payload
+    q = item_payload(question_index)
     return {
         **BASE_API,
         "/api/screening/sessions": {"ok": True, "data": [{"id": "ses_1", "status": "active", "policy": "greedy", "mode": "interactive"}]},
@@ -243,6 +245,39 @@ def test_each_answer_says_which_question_it_is_for(tmp_path):
     assert json.loads(sent[0]["body"]) == {"session_id": "ses_1", "value": 1, "stop": False, "item_index": 4}
 
 
+def test_answers_are_the_instruments_options_with_the_official_polarity(tmp_path):
+    """Audit C1: "Yes / Atypical" = 1 inverted A1-A9 ("Does your child look at you when you call their name?"
+    -> a literal "Yes" is typical). The buttons are now the instrument's options, and clicking one sends that
+    option's scored value."""
+    sent = {}
+    for qi, letter in ((0, "A"), (0, "E"), (0, "C"), (9, "A"), (9, "E")):
+        api = screening_api(qi, {"/api/screening/answer": {"ok": True, "data": {"finished": True, "result": {}}}})
+        out = run_scenario(tmp_path, {"hash": "#/screening", "api": api, "steps": [
+            {"wait": 200},
+            {"collect": ["labels", "#screeningArea [aria-label=\"Answer options\"]", "text"]},
+            {"click": f'[data-letter="{letter}"]'}]})
+        assert out["errors"] == []
+        labels = out["collected"]["labels"] or ""
+        assert "Never" in labels and "Yes" not in labels and "Atypical" not in labels
+        sent[(qi, letter)] = json.loads(posts(out, "/api/screening/answer")[0]["body"])["value"]
+    assert sent[(0, "A")] == 0          # A1 "Always" looks when called: typical
+    assert sent[(0, "C")] == 1          # A1 "Sometimes": scored atypical by the official rule
+    assert sent[(0, "E")] == 1          # A1 "Never": atypical
+    assert sent[(9, "A")] == 1          # A10 stares at nothing "Many times a day": atypical
+    assert sent[(9, "E")] == 0          # A10 "Never": typical
+
+
+def test_a_question_without_options_offers_no_answer_buttons(tmp_path):
+    api = screening_api(4)
+    api["/api/screening/sessions/ses_1"]["data"]["pending_question"] = {"index": 4, "code": "A5", "text": "x"}
+    out = run_scenario(tmp_path, {"hash": "#/screening", "api": api, "steps": [
+        {"wait": 200},
+        {"collect": ["answers", "#screeningArea [data-ans]", "count"]},
+        {"collect": ["area", "#screeningArea", "text"]}]})
+    assert out["collected"]["answers"] == 0
+    assert "Answer options for this question are unavailable" in out["collected"]["area"]
+
+
 def test_a_double_click_sends_one_request_and_disables_the_buttons(tmp_path):
     slow = {"__delay": 400, "body": {"ok": True, "data": {"finished": True, "result": {}}}}
     api = screening_api(4, {"/api/screening/answer": slow})
@@ -258,7 +293,8 @@ def test_a_double_click_sends_one_request_and_disables_the_buttons(tmp_path):
     ]})
     assert len(posts(out, "/api/screening/answer")) == 1, out["calls"]
     assert out["collected"]["busy"] is True
-    assert out["collected"]["buttons"] == 3 and out["collected"]["disabled"] == 3, "yes, no and stop are all locked"
+    # five answer options + stop, every one of them locked while the answer is in flight
+    assert out["collected"]["buttons"] == 6 and out["collected"]["disabled"] == 6, "all answers and stop are locked"
 
 
 def test_a_409_resyncs_to_the_current_question_instead_of_failing_silently(tmp_path):

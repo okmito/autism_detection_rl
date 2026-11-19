@@ -115,6 +115,22 @@ The repository now includes an integrated **NeuroBridge** web application (resea
 - **No external services/keys required.** Optional: `NEUROBRIDGE_SECRET` for the app secret.
 - **Important:** NeuroBridge is an explainable, adaptive screening and support **research prototype**. It provides screening/referral-research estimates and non-diagnostic support ideas only — it does **not** confirm or rule out autism and is not a substitute for professional assessment. Research metrics shown are from available offline artifacts and carry documented limitations (e.g. questionnaire-derived/circular labels, open verification gates, blocked/incompatible external validation where indicated).
 
+### 4a. React + TypeScript UI ("SOFT / SYSTEM", light and dark)
+
+A React 19 + TypeScript + Vite frontend lives in `frontend/` and talks to the same Flask API. It is served at **`/ui/`**; the original page at `/` is unchanged.
+
+```bash
+cd frontend
+npm install
+npm run build        # type-checks (strict), then writes app/static/ui/ (gitignored)
+cd .. && .venv/bin/python -m app.server    # open http://127.0.0.1:8010/ui/
+```
+
+- **Live development:** `npm run dev` in `frontend/` serves on `:5173` and proxies `/api` to the Flask server on `:8010`.
+- **Checks:** `npm run typecheck`, `npm test` (Vitest + Testing Library, no browser needed).
+- **Theme:** a sun/moon switch in the sidebar (and the top bar on small screens). The choice is stored in `localStorage` (`nb_ui_theme`); without one, the operating-system preference applies. `frontend/public/theme-init.js` sets the theme before the page renders; it is an external script because the server's Content-Security-Policy forbids inline scripts.
+- **Layout of `frontend/src/`:** `styles/` design tokens, `components/ui/` reusable components, `components/layout/` app shell, `views/` the nine pages, `api/` typed client and payload types, `hooks/` theme, status and data loading, `test/` Vitest suites.
+
 ### 4b. Run the legacy research demo
 
 **Browser demo (research demo):**

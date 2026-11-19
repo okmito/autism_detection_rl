@@ -1,0 +1,62 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "wide-tracking",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-11-16T07:32:58.612Z",
+        "reason": "Claude: unchosen decision-round sketch (growth-chart card), not shipped UI"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-11-16T07:32:58.620Z",
+        "reason": "Claude: unchosen decision-round sketch (growth-chart card), not shipped UI"
+      },
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "files": [
+          ".impeccable/mocks/decision/canon.html"
+        ],
+        "createdAt": "2026-11-16T07:32:58.628Z",
+        "reason": "Claude: canon card deliberately depicts the category standard; unchosen sketch, not shipped"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-11-16T08:04:06.154Z",
+        "reason": "Claude: unchosen decision-round sketch with its own direction's font; not shipped UI"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-transit.html"
+        ],
+        "createdAt": "2026-11-16T08:04:06.164Z",
+        "reason": "Claude: unchosen decision-round sketch with its own direction's font; not shipped UI"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/canon.html"
+        ],
+        "createdAt": "2026-11-16T08:04:06.172Z",
+        "reason": "Claude: unchosen decision-round sketch with its own direction's font; not shipped UI"
+      }
+    ]
+  }
+}

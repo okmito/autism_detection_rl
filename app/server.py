@@ -130,6 +130,16 @@ def index():
     return send_from_directory(app.static_folder, "index.html")
 
 
+@app.get("/ui")
+@app.get("/ui/")
+def ui_index():
+    """The React + TypeScript UI (SOFT / SYSTEM). Built by `npm run build` in frontend/ into static/ui/."""
+    built = Path(app.static_folder) / "ui" / "index.html"
+    if not built.is_file():
+        return err("The React UI is not built yet. Run `npm install && npm run build` in frontend/.", 404)
+    return send_from_directory(Path(app.static_folder) / "ui", "index.html")
+
+
 @app.get("/api/health")
 def health():
     return ok({"status": "up", "screening": screening.readiness()})
